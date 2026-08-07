@@ -9,7 +9,6 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Datas de setembro no formato exibido no site (DD/09/2026)
 DATAS_DESEJADAS = [
     "11/09/2026", "12/09/2026", "14/09/2026", "17/09/2026", 
     "18/09/2026", "20/09/2026", "21/09/2026", "24/09/2026", 
@@ -48,13 +47,10 @@ def ler_captcha_proeis(imagem_bytes):
     return resposta.content[0].text.strip()
 
 def encontrar_frame_com_seletor(page, seletor, timeout_s=15):
-    """Busca um elemento no contexto principal e em todos os subframes do site."""
     inicio = time.time()
     while time.time() - inicio < timeout_s:
-        # Testa na página principal
         if page.locator(seletor).count() > 0:
             return page, page.locator(seletor).first
-        # Testa dentro dos frames
         for frame in page.frames:
             try:
                 if frame.locator(seletor).count() > 0:
@@ -72,31 +68,27 @@ def executar_busca():
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(3)
+        time.sleep(2)
 
-        # 1. Localiza o menu select
-        print("2. Procurando menu de convênio...")
         target_frame, select_loc = encontrar_frame_com_seletor(page, "select")
         if not select_loc:
-            print("Erro: Menu 'select' não encontrado na página nem nos frames.")
+            print("Erro: Menu 'select' não encontrado.")
             browser.close()
             return False
 
-        print("-> Selecionando Prefeitura de Maricá...")
+        print("2. Selecionando Prefeitura de Maricá...")
         select_loc.select_option(label="Prefeitura de Maricá")
         time.sleep(1)
 
-        # 2. Localiza imagem do CAPTCHA
-        print("3. Procurando imagem do CAPTCHA...")
+        print("3. Lendo CAPTCHA...")
         _, img_loc = encontrar_frame_com_seletor(target_frame, "img")
         if not img_loc:
             _, img_loc = encontrar_frame_com_seletor(page, "img")
 
         img_bytes = img_loc.screenshot()
         texto_captcha = ler_captcha_proeis(img_bytes)
-        print(f"-> CAPTCHA lido pela IA: {texto_captcha}")
+        print(f"-> CAPTCHA lido: {texto_captcha}")
 
-        # 3. Preenche CAPTCHA e envia
         _, input_loc = encontrar_frame_com_seletor(target_frame, "input[type='text']")
         if not input_loc:
             _, input_loc = encontrar_frame_com_seletor(page, "input[type='text']")
@@ -107,10 +99,9 @@ def executar_busca():
             _, btn_loc = encontrar_frame_com_seletor(page, "input[value='VISUALIZAR']")
         btn_loc.click()
 
-        time.sleep(4)
+        time.sleep(3)
 
-        # 4. Procura tabela de serviços
-        print("4. Verificando vagas na tabela...")
+        print("4. Verificando vagas...")
         frame_tabela, _ = encontrar_frame_com_seletor(page, "tr")
         if not frame_tabela:
             frame_tabela = page
@@ -130,9 +121,18 @@ def executar_busca():
                         browser.close()
                         return True
 
-        print("Nenhuma vaga desejada para setembro disponível no momento.")
+        print("Nenhuma vaga desejada encontrada no momento.")
         browser.close()
         return False
 
 if __name__ == "__main__":
-    executar_busca()
+    # Rodar repetidamente por cerca de 4 minutos a cada acionamento (intervalos de 30 segundos)
+    tempo_limite = time.time() + (4 * 60) 
+    
+    while time.time() < tempo_limite:
+        conseguiu = executar_busca()
+        if conseguiu:
+            break
+        print("Aguardando 30 segundos para a próxima verificação...")
+        time.sleep(30)
+        
