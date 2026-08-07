@@ -9,10 +9,11 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Datas desejadas no formato DD/MM/AAAA
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
     "18/08/2026", "20/08/2026", "21/08/2026", "24/08/2026", 
-    "26/08/2026", "27/08/2026","30/08/2026"
+    "26/08/2026", "27/08/2026", "30/08/2026"
 ]
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -68,26 +69,27 @@ def executar_busca():
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(2)
+        time.sleep(3)
 
+        print("2. Procurando menu de convênio...")
         target_frame, select_loc = encontrar_frame_com_seletor(page, "select")
         if not select_loc:
-            print("Erro: Menu 'select' não encontrado.")
+            print("Erro: Menu 'select' não encontrado na página nem nos frames.")
             browser.close()
             return False
 
-        print("2. Selecionando Prefeitura de Maricá...")
+        print("-> Selecionando Prefeitura de Maricá...")
         select_loc.select_option(label="Prefeitura de Maricá")
         time.sleep(1)
 
-        print("3. Lendo CAPTCHA...")
+        print("3. Procurando imagem do CAPTCHA...")
         _, img_loc = encontrar_frame_com_seletor(target_frame, "img")
         if not img_loc:
             _, img_loc = encontrar_frame_com_seletor(page, "img")
 
         img_bytes = img_loc.screenshot()
         texto_captcha = ler_captcha_proeis(img_bytes)
-        print(f"-> CAPTCHA lido: {texto_captcha}")
+        print(f"-> CAPTCHA lido pela IA: {texto_captcha}")
 
         _, input_loc = encontrar_frame_com_seletor(target_frame, "input[type='text']")
         if not input_loc:
@@ -99,9 +101,9 @@ def executar_busca():
             _, btn_loc = encontrar_frame_com_seletor(page, "input[value='VISUALIZAR']")
         btn_loc.click()
 
-        time.sleep(3)
+        time.sleep(4)
 
-        print("4. Verificando vagas...")
+        print("4. Verificando vagas na tabela...")
         frame_tabela, _ = encontrar_frame_com_seletor(page, "tr")
         if not frame_tabela:
             frame_tabela = page
@@ -121,18 +123,10 @@ def executar_busca():
                         browser.close()
                         return True
 
-        print("Nenhuma vaga desejada encontrada no momento.")
+        print("Nenhuma vaga desejada disponível no momento.")
         browser.close()
         return False
 
 if __name__ == "__main__":
-    # Rodar repetidamente por cerca de 4 minutos a cada acionamento (intervalos de 30 segundos)
-    tempo_limite = time.time() + (4 * 60) 
+    executar_busca()
     
-    while time.time() < tempo_limite:
-        conseguiu = executar_busca()
-        if conseguiu:
-            break
-        print("Aguardando 30 segundos para a próxima verificação...")
-        time.sleep(30)
-        
