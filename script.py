@@ -46,18 +46,17 @@ def ler_captcha_proeis(imagem_bytes):
     )
     return resposta.content[0].text.strip()
 
-def encontrar_frame_com_seletor(page, seletor, timeout_s=15):
-    inicio = time.time()
-    while time.time() - inicio < timeout_s:
-        if page.locator(seletor).count() > 0:
-            return page, page.locator(seletor).first
-        for frame in page.frames:
-            try:
-                if frame.locator(seletor).count() > 0:
-                    return frame, frame.locator(seletor).first
-            except Exception:
-                pass
-        time.sleep(0.5)
+def buscar_em_todos_frames(page, seletor):
+    loc = page.locator(seletor)
+    if loc.count() > 0:
+        return page, loc
+    for frame in page.frames:
+        try:
+            loc_f = frame.locator(seletor)
+            if loc_f.count() > 0:
+                return frame, loc_f
+        except Exception:
+            pass
     return None, None
 
 def executar_busca():
@@ -67,63 +66,63 @@ def executar_busca():
         page = context.new_page()
 
         print("1. Acessando o portal PROEISBM...")
-        page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="domcontentloaded", timeout=60000)
-        time.sleep(3)
+        page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
+        page.wait_for_timeout(5000)
 
-        print("2. Selecionando o convenio...")
-        target_frame, select_loc = encontrar_frame_com_seletor(page, "select")
-        if not select_loc:
-            print("Erro: Menu 'select' não encontrado.")
-            browser.close()
-            return False
+        ctx_select, select_loc = buscar_em_todos_frames(page, "select")
+        if select_loc:
+            print("Menu de convenio encontrado. Selecionando Prefeitura de Marica...")
+            try:
+                select_loc.first.select_option(label="Prefeitura de Maricá")
+            except Exception:
+                pass
+            time.sleep(2)
 
-        select_loc.select_option(label="Prefeitura de Maricá")
-        time.sleep(1)
+            ctx_img, img_loc = buscar_em_todos_frames(page, "img[src*='captcha'], img")
+            if img_loc:
+                print("Imagem do CAPTCHA encontrada. Processando...")
+                try:
+                    img_bytes = img_loc.first.screenshot()
+                    texto_captcha = ler_captcha_proeis(img_bytes)
+                    print(f"CAPTCHA lido: {texto_captcha}")
 
-        print("3. Resolvendo CAPTCHA...")
-        _, img_loc = encontrar_frame_com_seletor(target_frame, "img")
-        if not img_loc:
-            _, img_loc = encontrar_frame_com_seletor(page, "img")
+                    ctx_input, input_loc = buscar_em_todos_frames(page, "input[type='text']")
+                    if input_loc:
+                        input_loc.first.fill(texto_captcha)
 
-        img_bytes = img_loc.screenshot()
-        texto_captcha = ler_captcha_proeis(img_bytes)
-        print(f"CAPTCHA lido: {texto_captcha}")
+                    ctx_btn, btn_loc = buscar_em_todos_frames(page, "input[value='VISUALIZAR'], input[type='submit']")
+                    if btn_loc:
+                        btn_loc.first.click()
+                        time.sleep(5)
+                except Exception as e:
+                    print(f"Aviso ao processar captcha: {e}")
+        else:
+            print("Menu 'select' nao encontrado. Verificando tabela diretamente...")
 
-        _, input_loc = encontrar_frame_com_seletor(target_frame, "input[type='text']")
-        if not input_loc:
-            _, input_loc = encontrar_frame_com_seletor(page, "input[type='text']")
-        input_loc.fill(texto_captcha)
+        print("2. Verificando vagas na tabela...")
+        frames_para_checar = [page] + page.frames
 
-        _, btn_loc = encontrar_frame_com_seletor(target_frame, "input[value='VISUALIZAR']")
-        if not btn_loc:
-            _, btn_loc = encontrar_frame_com_seletor(page, "input[value='VISUALIZAR']")
-        btn_loc.click()
+        for fr in frames_para_checar:
+            try:
+                linhas = fr.locator("tr")
+                qtd = linhas.count()
+                for i in range(qtd):
+                    texto = linhas.nth(i).inner_text()
+                    for data in DATAS_DESEJADAS:
+                        if data in texto:
+                            print(f"🚨 Vaga encontrada para a data: {data}")
+                            btn = linhas.nth(i).locator("input[value='SOLICITAR SERVIÇO'], input[value*='SOLICITAR'], button:has-text('SOLICITAR')")
+                            if btn.count() > 0:
+                                btn.first.click()
+                                time.sleep(3)
+                                avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
+                                print("Sucesso: Botao clicado!")
+                                browser.close()
+                                return True
+            except Exception:
+                pass
 
-        time.sleep(4)
-
-        print("4. Procurando vagas disponiveis...")
-        frame_tabela, _ = encontrar_frame_com_seletor(page, "tr")
-        if not frame_tabela:
-            frame_tabela = page
-
-        linhas = frame_tabela.locator("tr")
-        qtd_linhas = linhas.count()
-
-        for i in range(qtd_linhas):
-            texto_linha = linhas.nth(i).inner_text()
-            for data in DATAS_DESEJADAS:
-                if data in texto_linha:
-                    print(f"🚨 Vaga encontrada para a data: {data}")
-                    botao = linhas.nth(i).locator("input[value='SOLICITAR SERVIÇO'], input[type='button'], input[type='submit']")
-                    if botao.count() > 0:
-                        botao.first.click()
-                        time.sleep(2)
-                        avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
-                        print("Botao clicado e notificacao enviada!")
-                        browser.close()
-                        return True
-
-        print("Nenhuma vaga desejada encontrada.")
+        print("Nenhuma vaga das datas desejadas foi encontrada nesta rodada.")
         browser.close()
         return False
 
