@@ -9,7 +9,6 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Datas desejadas no formato DD/MM/AAAA
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
     "18/08/2026", "20/08/2026", "21/08/2026", "24/08/2026", 
@@ -71,25 +70,24 @@ def executar_busca():
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="domcontentloaded", timeout=60000)
         time.sleep(3)
 
-        print("2. Procurando menu de convênio...")
+        print("2. Selecionando o convenio...")
         target_frame, select_loc = encontrar_frame_com_seletor(page, "select")
         if not select_loc:
-            print("Erro: Menu 'select' não encontrado na página nem nos frames.")
+            print("Erro: Menu 'select' não encontrado.")
             browser.close()
             return False
 
-        print("-> Selecionando Prefeitura de Maricá...")
         select_loc.select_option(label="Prefeitura de Maricá")
         time.sleep(1)
 
-        print("3. Procurando imagem do CAPTCHA...")
+        print("3. Resolvendo CAPTCHA...")
         _, img_loc = encontrar_frame_com_seletor(target_frame, "img")
         if not img_loc:
             _, img_loc = encontrar_frame_com_seletor(page, "img")
 
         img_bytes = img_loc.screenshot()
         texto_captcha = ler_captcha_proeis(img_bytes)
-        print(f"-> CAPTCHA lido pela IA: {texto_captcha}")
+        print(f"CAPTCHA lido: {texto_captcha}")
 
         _, input_loc = encontrar_frame_com_seletor(target_frame, "input[type='text']")
         if not input_loc:
@@ -103,7 +101,7 @@ def executar_busca():
 
         time.sleep(4)
 
-        print("4. Verificando vagas na tabela...")
+        print("4. Procurando vagas disponiveis...")
         frame_tabela, _ = encontrar_frame_com_seletor(page, "tr")
         if not frame_tabela:
             frame_tabela = page
@@ -115,15 +113,17 @@ def executar_busca():
             texto_linha = linhas.nth(i).inner_text()
             for data in DATAS_DESEJADAS:
                 if data in texto_linha:
-                    print(f"🚨 Vaga encontrada para {data}!")
-                    botao = linhas.nth(i).locator("input[value='SOLICITAR SERVIÇO'], button:has-text('SOLICITAR SERVIÇO')")
-                    if botao.is_visible():
-                        botao.click()
-                        avisar_telegram(f"🚨 VAGA SOLICITADA! Data {data} no PROEISBM!")
+                    print(f"🚨 Vaga encontrada para a data: {data}")
+                    botao = linhas.nth(i).locator("input[value='SOLICITAR SERVIÇO'], input[type='button'], input[type='submit']")
+                    if botao.count() > 0:
+                        botao.first.click()
+                        time.sleep(2)
+                        avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
+                        print("Botao clicado e notificacao enviada!")
                         browser.close()
                         return True
 
-        print("Nenhuma vaga desejada disponível no momento.")
+        print("Nenhuma vaga desejada encontrada.")
         browser.close()
         return False
 
