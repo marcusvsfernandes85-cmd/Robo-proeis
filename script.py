@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-PROEIS_RG = os.getenv("PROEIS_CPF")  # Pega o RG cadastrado no secret
+PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
 DATAS_DESEJADAS = [
@@ -71,42 +71,37 @@ def executar_busca():
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # Processo de Login na Área Restrita
+        # Login na Area Restrita
         if PROEIS_RG and PROEIS_SENHA:
             print("2. Preenchendo login (RG e Senha)...")
             try:
-                # Preenche o RG no primeiro campo de texto e a Senha
-                ctx_rg, input_rg = buscar_em_todos_frames(page, "input[type='text']")
-                ctx_senha, input_senha = buscar_em_todos_frames(page, "input[type='password']")
+                inputs_texto = page.locator("input[type='text']")
+                input_senha = page.locator("input[type='password']")
 
-                if input_rg and input_senha:
-                    input_rg.first.fill(PROEIS_RG)
+                if inputs_texto.count() > 0 and input_senha.count() > 0:
+                    inputs_texto.first.fill(PROEIS_RG)
                     input_senha.first.fill(PROEIS_SENHA)
 
-                    # Leitura do CAPTCHA de Login
-                    ctx_img, img_loc = buscar_em_todos_frames(page, "img[src*='captcha'], img")
-                    if img_loc:
+                    img_captcha = page.locator("img[src*='captcha'], img")
+                    if img_captcha.count() > 0:
                         print("Lendo CAPTCHA de login...")
-                        img_bytes = img_loc.first.screenshot()
+                        img_bytes = img_captcha.first.screenshot()
                         texto_captcha = ler_captcha_proeis(img_bytes)
                         print(f"CAPTCHA lido: {texto_captcha}")
 
-                        # Preenche o CAPTCHA (segundo campo de texto da página)
-                        inputs_texto = page.locator("input[type='text']")
                         if inputs_texto.count() > 1:
                             inputs_texto.nth(1).fill(texto_captcha)
 
-                    # Clica no botão Entrar
                     btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
-                        print("Botão Entrar clicado. Aguardando login...")
+                        print("Botao Entrar clicado. Aguardando login...")
                         page.wait_for_timeout(5000)
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Busca por vagas na área logada
-        print("3. Verificando vagas na área interna...")
+        # Busca por vagas
+        print("3. Verificando vagas na area interna...")
         frames_para_checar = [page] + page.frames
 
         for fr in frames_para_checar:
@@ -123,7 +118,7 @@ def executar_busca():
                                 btn.first.click()
                                 time.sleep(3)
                                 avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
-                                print("Sucesso: Botão clicado!")
+                                print("Sucesso: Botao clicado!")
                                 browser.close()
                                 return True
             except Exception:
@@ -135,4 +130,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-        
+    
