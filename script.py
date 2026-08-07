@@ -9,7 +9,12 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-DIAS_SETEMBRO = ["11", "12", "14", "17", "18", "20", "21", "24", "26", "27"]
+# Datas de setembro no formato exibido no site (DD/09/2026)
+DATAS_DESEJADAS = [
+    "11/09/2026", "12/09/2026", "14/09/2026", "17/09/2026", 
+    "18/09/2026", "20/09/2026", "21/09/2026", "24/09/2026", 
+    "26/09/2026", "27/09/2026"
+]
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -45,16 +50,20 @@ def ler_captcha_proeis(imagem_bytes):
 def executar_busca():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        # ignora erros de certificado HTTPS do site
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        page.goto("https://www.proeisbm.cbmerj.rj.gov.br/")
+        print("1. Acessando o portal PROEISBM...")
+        page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="domcontentloaded", timeout=60000)
 
-        print("1. Selecionando Prefeitura de Maricá...")
+        # Seleciona o convênio
+        page.wait_for_selector("select", timeout=15000)
+        print("2. Selecionando Prefeitura de Maricá...")
         page.select_option("select", label="Prefeitura de Maricá")
 
-        print("2. Lendo o CAPTCHA com a IA...")
+        # Resolve o CAPTCHA
+        print("3. Lendo o CAPTCHA com a IA...")
+        page.wait_for_selector("img", timeout=15000)
         captcha_img = page.locator("img").first
         img_bytes = captcha_img.screenshot()
 
@@ -66,17 +75,25 @@ def executar_busca():
 
         page.wait_for_load_state("networkidle")
 
-        print("3. Verificando datas de setembro...")
-        for dia in DIAS_SETEMBRO:
-            elemento_dia = page.locator(f"text='{dia}'")
-            if elemento_dia.is_visible():
-                print(f"Vaga encontrada para o dia {dia}!")
-                elemento_dia.click()
-                avisar_telegram(f"🚨 VAGA SELECIONADA! O dia {dia} de setembro foi garantido no PROEISBM!")
-                browser.close()
-                return True
+        # Procura nas linhas da tabela
+        print("4. Verificando a tabela de vagas disponibilizadas...")
+        linhas = page.locator("tr")
+        qtd_linhas = linhas.count()
 
-        print("Nenhuma das datas desejadas está disponível agora.")
+        for i in range(qtd_linhas):
+            texto_linha = linhas.nth(i).inner_text()
+            for data in DATAS_DESEJADAS:
+                if data in texto_linha:
+                    print(f"🚨 Vaga encontrada para a data {data}!")
+                    # Clica no botão "SOLICITAR SERVIÇO" daquela linha específica
+                    botao_solicitar = linhas.nth(i).locator("input[value='SOLICITAR SERVIÇO'], button:has-text('SOLICITAR SERVIÇO')")
+                    if botao_solicitar.is_visible():
+                        botao_solicitar.click()
+                        avisar_telegram(f"🚨 VAGA SOLICITADA! A data {data} foi selecionada no PROEISBM!")
+                        browser.close()
+                        return True
+
+        print("Nenhuma das datas de setembro desejadas está disponível no momento.")
         browser.close()
         return False
 
