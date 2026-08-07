@@ -122,7 +122,7 @@ def executar_busca():
             except Exception:
                 pass
 
-        print("Nenhuma vaga das datas desejadas foi encontrada nesta rodada.")
+        print("Nenhuma vaga desejada encontrada.")
         browser.close()
         return False
 
