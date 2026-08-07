@@ -12,7 +12,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DATAS_DESEJADAS = [
     "11/09/2026", "12/09/2026", "14/09/2026", "17/09/2026", 
     "18/09/2026", "20/09/2026", "21/09/2026", "24/09/2026", 
-    "26/09/2026", "27/09/2026"
+    "26/09/2026", "27/09/2026","30/08/2026"
 ]
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
