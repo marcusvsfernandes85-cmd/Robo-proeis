@@ -2,8 +2,8 @@ name: Monitor PROEISBM
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Executa a cada 5 minutos
-  workflow_dispatch:        # Permite rodar manualmente
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   executar:
@@ -24,11 +24,6 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Rodar Robô
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-              - name: Rodar Robô
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
