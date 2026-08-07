@@ -8,6 +8,8 @@ from playwright.sync_api import sync_playwright
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+PROEIS_RG = os.getenv("PROEIS_CPF")  # Pega o RG cadastrado no secret
+PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
@@ -67,39 +69,44 @@ def executar_busca():
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(3000)
 
-        ctx_select, select_loc = buscar_em_todos_frames(page, "select")
-        if select_loc:
-            print("Menu de convenio encontrado. Selecionando Prefeitura de Marica...")
+        # Processo de Login na Área Restrita
+        if PROEIS_RG and PROEIS_SENHA:
+            print("2. Preenchendo login (RG e Senha)...")
             try:
-                select_loc.first.select_option(label="Prefeitura de Maricá")
-            except Exception:
-                pass
-            time.sleep(2)
+                # Preenche o RG no primeiro campo de texto e a Senha
+                ctx_rg, input_rg = buscar_em_todos_frames(page, "input[type='text']")
+                ctx_senha, input_senha = buscar_em_todos_frames(page, "input[type='password']")
 
-            ctx_img, img_loc = buscar_em_todos_frames(page, "img[src*='captcha'], img")
-            if img_loc:
-                print("Imagem do CAPTCHA encontrada. Processando...")
-                try:
-                    img_bytes = img_loc.first.screenshot()
-                    texto_captcha = ler_captcha_proeis(img_bytes)
-                    print(f"CAPTCHA lido: {texto_captcha}")
+                if input_rg and input_senha:
+                    input_rg.first.fill(PROEIS_RG)
+                    input_senha.first.fill(PROEIS_SENHA)
 
-                    ctx_input, input_loc = buscar_em_todos_frames(page, "input[type='text']")
-                    if input_loc:
-                        input_loc.first.fill(texto_captcha)
+                    # Leitura do CAPTCHA de Login
+                    ctx_img, img_loc = buscar_em_todos_frames(page, "img[src*='captcha'], img")
+                    if img_loc:
+                        print("Lendo CAPTCHA de login...")
+                        img_bytes = img_loc.first.screenshot()
+                        texto_captcha = ler_captcha_proeis(img_bytes)
+                        print(f"CAPTCHA lido: {texto_captcha}")
 
-                    ctx_btn, btn_loc = buscar_em_todos_frames(page, "input[value='VISUALIZAR'], input[type='submit']")
-                    if btn_loc:
-                        btn_loc.first.click()
-                        time.sleep(5)
-                except Exception as e:
-                    print(f"Aviso ao processar captcha: {e}")
-        else:
-            print("Menu 'select' nao encontrado. Verificando tabela diretamente...")
+                        # Preenche o CAPTCHA (segundo campo de texto da página)
+                        inputs_texto = page.locator("input[type='text']")
+                        if inputs_texto.count() > 1:
+                            inputs_texto.nth(1).fill(texto_captcha)
 
-        print("2. Verificando vagas na tabela...")
+                    # Clica no botão Entrar
+                    btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
+                    if btn_entrar.count() > 0:
+                        btn_entrar.first.click()
+                        print("Botão Entrar clicado. Aguardando login...")
+                        page.wait_for_timeout(5000)
+            except Exception as e:
+                print(f"Aviso ao efetuar login: {e}")
+
+        # Busca por vagas na área logada
+        print("3. Verificando vagas na área interna...")
         frames_para_checar = [page] + page.frames
 
         for fr in frames_para_checar:
@@ -111,12 +118,12 @@ def executar_busca():
                     for data in DATAS_DESEJADAS:
                         if data in texto:
                             print(f"🚨 Vaga encontrada para a data: {data}")
-                            btn = linhas.nth(i).locator("input[value='SOLICITAR SERVIÇO'], input[value*='SOLICITAR'], button:has-text('SOLICITAR')")
+                            btn = linhas.nth(i).locator("input[value*='SOLICITAR'], button:has-text('SOLICITAR')")
                             if btn.count() > 0:
                                 btn.first.click()
                                 time.sleep(3)
                                 avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
-                                print("Sucesso: Botao clicado!")
+                                print("Sucesso: Botão clicado!")
                                 browser.close()
                                 return True
             except Exception:
