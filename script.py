@@ -2,10 +2,11 @@ import os
 import time
 import base64
 import requests
-import anthropic
+from google import genai
+from google.genai import types
 from playwright.sync_api import sync_playwright
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
@@ -17,7 +18,7 @@ DATAS_DESEJADAS = [
     "24/08/2026", "26/08/2026", "27/08/2026", "30/08/2026"
 ]
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+client_gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 def avisar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -28,25 +29,26 @@ def avisar_telegram(mensagem):
         print(f"Erro ao notificar Telegram: {e}")
 
 def ler_captcha_proeis(imagem_bytes):
-    base64_img = base64.b64encode(imagem_bytes).decode('utf-8')
-    resposta = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
-        max_tokens=10,
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/png", "data": base64_img}
-                },
-                {
-                    "type": "text",
-                    "text": "Retorne APENAS os 4 caracteres visíveis nesta imagem de CAPTCHA."
-                }
+    if not client_gemini:
+        print("Erro: GEMINI_API_KEY não configurada.")
+        return ""
+    
+    try:
+        response = client_gemini.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                types.Part.from_bytes(
+                    data=imagem_bytes,
+                    mime_type="image/png",
+                ),
+                "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
             ]
-        }]
-    )
-    return resposta.content[0].text.strip()
+        )
+        texto = response.text.strip() if response.text else ""
+        return texto
+    except Exception as e:
+        print(f"Erro na leitura do CAPTCHA via Gemini: {e}")
+        return ""
 
 def executar_busca():
     with sync_playwright() as p:
@@ -147,4 +149,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-    
+            
