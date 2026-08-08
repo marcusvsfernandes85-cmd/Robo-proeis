@@ -26,9 +26,8 @@ def avisar_telegram(mensagem, foto_path=None):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
     url_msg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem}
     try:
-        requests.post(url_msg, data=payload)
+        requests.post(url_msg, data={"chat_id": TELEGRAM_CHAT_ID, "text": mensagem})
     except Exception as e:
         print(f"Erro ao notificar Telegram: {e}")
 
@@ -67,20 +66,15 @@ def ler_captcha_proeis(imagem_bytes):
             response = client_gemini.models.generate_content(
                 model=modelo,
                 contents=[
-                    types.Part.from_bytes(
-                        data=imagem_bytes,
-                        mime_type="image/png",
-                    ),
-                    "Retorne APENAS os caracteres alfa-numéricos (A-Z, 0-9) visíveis no CAPTCHA. Não use caracteres especiais ou outros idiomas."
+                    types.Part.from_bytes(data=imagem_bytes, mime_type="image/png"),
+                    "Retorne APENAS os caracteres alfa-numéricos (A-Z, 0-9) visíveis no CAPTCHA. Não use caracteres especiais."
                 ]
             )
             texto_raw = response.text.strip() if response.text else ""
-            
-            # Filtra estritamente apenas letras e números ASCII (remove árabe, cirílico, pontuação, etc)
             texto_limpo = re.sub(r'[^a-zA-Z0-9]', '', texto_raw)
             
             if texto_limpo and 3 <= len(texto_limpo) <= 6:
-                print(f"CAPTCHA lido e sanitizado ({modelo}): {texto_limpo}")
+                print(f"CAPTCHA lido ({modelo}): {texto_limpo}")
                 return texto_limpo
         except Exception:
             continue
@@ -88,12 +82,7 @@ def ler_captcha_proeis(imagem_bytes):
     return ""
 
 def localizar_imagem_captcha(contexto):
-    seletores = [
-        "img[src*='captcha']",
-        "img[src*='Captcha']",
-        "img[id*='captcha']",
-        "form img"
-    ]
+    seletores = ["img[src*='captcha']", "img[src*='Captcha']", "img[id*='captcha']", "form img"]
     for sel in seletores:
         loc = contexto.locator(sel)
         if loc.count() > 0:
@@ -109,34 +98,22 @@ def executar_busca():
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox"
-            ]
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"]
         )
-        
         context = browser.new_context(
             ignore_https_errors=True,
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             viewport={"width": 1280, "height": 720}
         )
-        
         page = context.new_page()
-
-        page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-        """)
-
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
         page.on("dialog", lambda dialog: (print(f"Alerta do sistema: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # Passo 1: Login
+        # 1. Login
         if PROEIS_RG and PROEIS_SENHA:
             print("2. Preenchendo credenciais de login...")
             try:
@@ -149,49 +126,50 @@ def executar_busca():
 
                     img_captcha = localizar_imagem_captcha(page)
                     if img_captcha:
-                        print("Lendo CAPTCHA de login...")
-                        img_bytes = img_captcha.screenshot()
-                        texto_captcha = ler_captcha_proeis(img_bytes)
+                        texto_captcha = ler_captcha_proeis(img_captcha.screenshot())
                         if inputs_texto.count() > 1 and texto_captcha:
                             inputs_texto.nth(1).fill(texto_captcha)
 
                     btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
-                        print("Aguardando confirmação de login...")
+                        print("Aguardando login...")
                         page.wait_for_timeout(5000)
             except Exception as e:
                 print(f"Erro no login: {e}")
 
-        # Passo 2: Navegação
+        # Verifica se o login teve sucesso
+        print(f"URL atual após login: {page.url}")
+
+        # 2. Navegação
         print("3. Navegando até 'Serviços Disponíveis'...")
-        fontes = [page] + page.frames
-        for f in fontes:
+        menu_clicado = False
+        for f in [page] + page.frames:
             try:
                 link = f.locator("a", has_text="Serviços Disponíveis")
                 if link.count() > 0 and link.first.is_visible():
                     link.first.click()
-                    print("Menu 'Serviços Disponíveis' clicado.")
+                    menu_clicado = True
+                    print("Menu 'Serviços Disponíveis' clicado via locator.")
                     page.wait_for_timeout(4000)
                     break
             except Exception:
                 continue
 
-        page.evaluate("""
-            () => {
-                const links = Array.from(document.querySelectorAll('a'));
-                const target = links.find(a => a.textContent.includes('Serviços Disponíveis'));
-                if (target) target.click();
-            }
-        """)
-        page.wait_for_timeout(4000)
+        if not menu_clicado:
+            page.evaluate("""
+                () => {
+                    const links = Array.from(document.querySelectorAll('a'));
+                    const target = links.find(a => a.textContent.includes('Serviços Disponíveis'));
+                    if (target) target.click();
+                }
+            """)
+            page.wait_for_timeout(4000)
 
-        # Passo 3: Busca e CAPTCHA
+        # 3. Busca e CAPTCHA
         print("4. Selecionando convênio e resolvendo CAPTCHA de busca...")
-        fontes = [page] + page.frames
-
         submeteu = False
-        for f in fontes:
+        for f in [page] + page.frames:
             try:
                 btn_vis = f.locator("input[value*='VISUALIZAR'], input[value*='Visualizar'], button:has-text('Visualizar')")
                 if btn_vis.count() > 0:
@@ -201,34 +179,33 @@ def executar_busca():
                             select_elem.first.select_option(label=CONVENIO_DESEJADO)
                             print(f"Convênio selecionado: '{CONVENIO_DESEJADO}'")
                             page.wait_for_timeout(1000)
-                        except Exception:
-                            print(f"Não foi possível selecionar '{CONVENIO_DESEJADO}'.")
+                        except Exception as sel_err:
+                            print(f"Aviso na seleção do convênio: {sel_err}")
 
                     img_captcha_busca = localizar_imagem_captcha(f)
                     if img_captcha_busca:
-                        img_bytes_busca = img_captcha_busca.screenshot()
-                        texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
-
+                        texto_captcha_busca = ler_captcha_proeis(img_captcha_busca.screenshot())
                         inputs = f.locator("input[type='text']")
                         if inputs.count() > 0 and texto_captcha_busca:
                             inputs.last.fill(texto_captcha_busca)
 
-                    print("Clicando no botão VISUALIZAR...")
                     btn_vis.first.click()
                     submeteu = True
+                    print("Botão VISUALIZAR clicado com sucesso.")
                     break
             except Exception as e:
                 print(f"Erro na submissão da busca: {e}")
 
         if submeteu:
-            print("Aguardando carregamento da tabela pós-busca...")
+            print("Aguardando carregamento dos dados...")
             time.sleep(8)
-            page.wait_for_load_state("networkidle", timeout=15000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
 
-        # Passo 4: Leitura do Resultado e Envio da Foto via Telegram
-        print("5. Verificando resultado da busca...")
-        fontes = [page] + page.frames
-
+        # 4. Diagnóstico e Varredura
+        print("5. Verificando resultado na tela...")
         foto_path = "resultado.png"
         page.screenshot(path=foto_path)
         avisar_telegram("📷 Diagnóstico da varredura PROEIS:", foto_path=foto_path)
@@ -236,14 +213,19 @@ def executar_busca():
         palavras_ignorar = ["cookie", "gdpr", "consent", "privacidade", "lawinfo", "javascript"]
         linhas_encontradas = 0
 
-        for f in fontes:
+        for f in [page] + page.frames:
             try:
+                texto_body = f.locator("body").inner_text()
+                if "incorreto" in texto_body.lower() or "inválido" in texto_body.lower():
+                    print("⚠️ AVISO NA TELA: CAPTCHA ou credencial informada incorretamente.")
+                if "nenhum registro" in texto_body.lower():
+                    print("ℹ️ AVISO NA TELA: O portal informou que não há registros de vagas.")
+
                 linhas = f.locator("tr")
                 total = linhas.count()
                 
                 for i in range(total):
-                    texto_raw = linhas.nth(i).inner_text()
-                    texto_linha = texto_raw.replace('\xa0', ' ').strip()
+                    texto_linha = linhas.nth(i).inner_text().replace('\xa0', ' ').strip()
                     
                     if any(kw in texto_linha.lower() for kw in palavras_ignorar):
                         continue
@@ -259,23 +241,22 @@ def executar_busca():
                                     "input[value*='SOLICITAR'], button:has-text('SOLICITAR'), a:has-text('SOLICITAR')"
                                 )
                                 if btn_solicitar.count() > 0 and btn_solicitar.first.is_visible():
-                                    print(f"Solicitando serviço para {data}...")
                                     btn_solicitar.first.click()
                                     page.wait_for_timeout(5000)
                                     avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
                                     browser.close()
                                     return True
             except Exception as e:
-                print(f"Erro ao ler tabela: {e}")
+                print(f"Erro ao ler tabela no frame: {e}")
 
         if linhas_encontradas == 0:
             print("Nenhuma tabela de vagas foi gerada nesta execução.")
         else:
-            print(f"Varredura concluída. {linhas_encontradas} linha(s) processada(s).")
+            print(f"Varredura concluída. {linhas_encontradas} linha(s) encontrada(s).")
 
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
-    
+                
