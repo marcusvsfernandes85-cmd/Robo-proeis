@@ -21,15 +21,23 @@ DATAS_DESEJADAS = [
 
 client_gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-def avisar_telegram(mensagem):
+def avisar_telegram(mensagem, foto_path=None):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    url_msg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem}
     try:
-        requests.post(url, data=payload)
+        requests.post(url_msg, data=payload)
     except Exception as e:
         print(f"Erro ao notificar Telegram: {e}")
+
+    if foto_path and os.path.exists(foto_path):
+        url_photo = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+        try:
+            with open(foto_path, "rb") as photo:
+                requests.post(url_photo, data={"chat_id": TELEGRAM_CHAT_ID}, files={"photo": photo})
+        except Exception as e:
+            print(f"Erro ao enviar foto no Telegram: {e}")
 
 def obter_modelos_visao():
     modelos_validos = []
@@ -94,7 +102,6 @@ def localizar_imagem_captcha(contexto):
 
 def executar_busca():
     with sync_playwright() as p:
-        # Configura argumentos para mascarar o navegador como um usuário real (Anti-Bot)
         browser = p.chromium.launch(
             headless=True,
             args=[
@@ -112,7 +119,6 @@ def executar_busca():
         
         page = context.new_page()
 
-        # Oculta a flag navigator.webdriver que revela scripts de automação
         page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
@@ -121,9 +127,9 @@ def executar_busca():
 
         page.on("dialog", lambda dialog: (print(f"Alerta do sistema: {dialog.message}"), dialog.accept()))
 
-        print("1. Acessando o portal PROEISBM com bypass anti-bot...")
+        print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
 
         # Passo 1: Login
         if PROEIS_RG and PROEIS_SENHA:
@@ -173,21 +179,23 @@ def executar_busca():
                 if (target) target.click();
             }
         """)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(4000)
 
-        # Passo 3: Busca e CAPTCHA de Consulta
+        # Passo 3: Busca e CAPTCHA
         print("4. Selecionando convênio e resolvendo CAPTCHA de busca...")
         fontes = [page] + page.frames
 
+        submeteu = False
         for f in fontes:
             try:
-                btn_vis = f.locator("input[value='VISUALIZAR'], input[value='Visualizar']")
+                btn_vis = f.locator("input[value*='VISUALIZAR'], input[value*='Visualizar'], button:has-text('Visualizar')")
                 if btn_vis.count() > 0:
                     select_elem = f.locator("select")
                     if select_elem.count() > 0 and CONVENIO_DESEJADO:
                         try:
                             select_elem.first.select_option(label=CONVENIO_DESEJADO)
                             print(f"Convênio selecionado: '{CONVENIO_DESEJADO}'")
+                            page.wait_for_timeout(1000)
                         except Exception:
                             print(f"Não foi possível selecionar '{CONVENIO_DESEJADO}'.")
 
@@ -200,23 +208,29 @@ def executar_busca():
                         if inputs.count() > 0 and texto_captcha_busca:
                             inputs.last.fill(texto_captcha_busca)
 
-                    # Força a submissão via clique humano e press Enter
+                    print("Clicando no botão VISUALIZAR...")
                     btn_vis.first.click()
-                    page.wait_for_timeout(6000)
+                    submeteu = True
                     break
             except Exception as e:
                 print(f"Erro na submissão da busca: {e}")
 
-        # Passo 4: Diagnóstico e Leitura da Tabela
+        if submeteu:
+            print("Aguardando carregamento da tabela pós-busca...")
+            time.sleep(8)
+            page.wait_for_load_state("networkidle", timeout=15000)
+
+        # Passo 4: Leitura do Resultado e Envio da Foto via Telegram
         print("5. Verificando resultado da busca...")
         fontes = [page] + page.frames
 
+        # Tira print e envia no Telegram para acompanhamento visual
+        foto_path = "resultado.png"
+        page.screenshot(path=foto_path)
+        avisar_telegram("📷 Diagnóstico da varredura PROEIS:", foto_path=foto_path)
+
         palavras_ignorar = ["cookie", "gdpr", "consent", "privacidade", "lawinfo", "javascript"]
         linhas_encontradas = 0
-
-        # Tira uma foto da tela final para fins de diagnóstico
-        page.screenshot(path="resultado.png")
-        print("📸 Captura de tela salva como 'resultado.png'.")
 
         for f in fontes:
             try:
@@ -232,7 +246,7 @@ def executar_busca():
                     
                     if len(texto_linha) > 15:
                         linhas_encontradas += 1
-                        print(f"Linha de Vaga [{linhas_encontradas}]: {texto_linha}")
+                        print(f"Linha [{linhas_encontradas}]: {texto_linha}")
 
                         for data in DATAS_DESEJADAS:
                             if data in texto_linha:
@@ -253,7 +267,7 @@ def executar_busca():
         if linhas_encontradas == 0:
             print("Nenhuma tabela de vagas foi gerada nesta execução.")
         else:
-            print(f"Varredura concluída. {linhas_encontradas} vaga(s) exibida(s).")
+            print(f"Varredura concluída. {linhas_encontradas} linha(s) processada(s).")
 
         browser.close()
         return False
