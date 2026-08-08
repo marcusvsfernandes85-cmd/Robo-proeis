@@ -11,8 +11,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Se desejar um convênio específico (ex: "Prefeitura de Niterói" ou None para manter o padrão)
-CONVENIO_DESEJADO = None  # Altere para "Prefeitura de Niterói" ou "Prefeitura de Maricá" se necessário
+# Se desejar um convênio específico (ex: "Prefeitura de Maricá"), altere aqui. Deixe None para pegar todos.
+CONVENIO_DESEJADO = None
 
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
@@ -23,6 +23,8 @@ DATAS_DESEJADAS = [
 client_gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 def avisar_telegram(mensagem):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem}
     try:
@@ -54,8 +56,8 @@ def ler_captcha_proeis(imagem_bytes):
                 if texto:
                     return texto
             except Exception as e:
-                print(f"Aviso: Tentativa {tentativa} no modelo {modelo} falhou. Aguardando 15s...")
-                time.sleep(15)
+                print(f"Aviso: Tentativa {tentativa} no modelo {modelo} falhou (Cota/Erro). Aguardando 20s...")
+                time.sleep(20)
                 
     return ""
 
@@ -85,6 +87,12 @@ def executar_busca():
                         print("Lendo CAPTCHA de login...")
                         img_bytes = img_captcha.first.screenshot()
                         texto_captcha = ler_captcha_proeis(img_bytes)
+                        
+                        if not texto_captcha:
+                            print("Erro: Não foi possível ler o CAPTCHA de login devido ao limite da API.")
+                            browser.close()
+                            return False
+                            
                         print(f"CAPTCHA de login lido: {texto_captcha}")
 
                         if inputs_texto.count() > 1:
@@ -98,7 +106,7 @@ def executar_busca():
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Step 2: Seleção de Convênio (Apenas se especificado)
+        # Step 2: Consulta
         print("3. Verificando opções de consulta e resolvendo CAPTCHA da busca...")
         try:
             if CONVENIO_DESEJADO:
@@ -106,7 +114,6 @@ def executar_busca():
                 if select_convenio.count() > 0:
                     try:
                         select_convenio.first.select_option(label=CONVENIO_DESEJADO)
-                        print(f"Convênio selecionado: {CONVENIO_DESEJADO}")
                     except Exception as e:
                         print(f"Não foi possível selecionar o convênio {CONVENIO_DESEJADO}: {e}")
 
@@ -117,6 +124,12 @@ def executar_busca():
                 print("Lendo CAPTCHA da tela de busca...")
                 img_bytes_busca = img_captcha_busca.last.screenshot()
                 texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
+                
+                if not texto_captcha_busca:
+                    print("Erro: Não foi possível ler o CAPTCHA de busca por conta do limite de cota da API.")
+                    browser.close()
+                    return False
+                    
                 print(f"CAPTCHA de busca lido: {texto_captcha_busca}")
 
                 if inputs_busca.count() > 0:
@@ -130,7 +143,7 @@ def executar_busca():
         except Exception as e:
             print(f"Aviso na etapa de consulta de serviços vagos: {e}")
 
-        # Step 3: Buscando e Clicando em "SOLICITAR SERVIÇO"
+        # Step 3: Inspeção e Varredura
         print("4. Verificando tabela de vagas...")
         frames_para_checar = [page] + page.frames
 
@@ -145,7 +158,6 @@ def executar_busca():
                         if data in texto_linha:
                             print(f"🚨 Vaga encontrada para a data: {data}")
                             
-                            # Busca o botão 'SOLICITAR SERVIÇO' na linha da data correspondente
                             btn = linhas.nth(i).locator("input[value*='SOLICITAR'], button:has-text('SOLICITAR'), input[type='button'], input[type='submit']")
                             
                             if btn.count() > 0:
@@ -164,4 +176,3 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-        
