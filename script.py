@@ -94,17 +94,38 @@ def localizar_imagem_captcha(contexto):
 
 def executar_busca():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(ignore_https_errors=True)
+        # Configura argumentos para mascarar o navegador como um usuário real (Anti-Bot)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox"
+            ]
+        )
+        
+        context = browser.new_context(
+            ignore_https_errors=True,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 720}
+        )
+        
         page = context.new_page()
+
+        # Oculta a flag navigator.webdriver que revela scripts de automação
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
 
         page.on("dialog", lambda dialog: (print(f"Alerta do sistema: {dialog.message}"), dialog.accept()))
 
-        print("1. Acessando o portal PROEISBM...")
+        print("1. Acessando o portal PROEISBM com bypass anti-bot...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(2000)
 
-        # 1. Login
+        # Passo 1: Login
         if PROEIS_RG and PROEIS_SENHA:
             print("2. Preenchendo credenciais de login...")
             try:
@@ -131,7 +152,7 @@ def executar_busca():
             except Exception as e:
                 print(f"Erro no login: {e}")
 
-        # 2. Navegação
+        # Passo 2: Navegação
         print("3. Navegando até 'Serviços Disponíveis'...")
         fontes = [page] + page.frames
         for f in fontes:
@@ -154,7 +175,7 @@ def executar_busca():
         """)
         page.wait_for_timeout(3000)
 
-        # 3. Form da Busca + Resolução de CAPTCHA
+        # Passo 3: Busca e CAPTCHA de Consulta
         print("4. Selecionando convênio e resolvendo CAPTCHA de busca...")
         fontes = [page] + page.frames
 
@@ -179,29 +200,26 @@ def executar_busca():
                         if inputs.count() > 0 and texto_captcha_busca:
                             inputs.last.fill(texto_captcha_busca)
 
+                    # Força a submissão via clique humano e press Enter
                     btn_vis.first.click()
-                    print("Botão VISUALIZAR clicado. Aguardando dados...")
                     page.wait_for_timeout(6000)
                     break
             except Exception as e:
                 print(f"Erro na submissão da busca: {e}")
 
-        # 4. Varredura com verificação de erros na tela
+        # Passo 4: Diagnóstico e Leitura da Tabela
         print("5. Verificando resultado da busca...")
         fontes = [page] + page.frames
 
         palavras_ignorar = ["cookie", "gdpr", "consent", "privacidade", "lawinfo", "javascript"]
         linhas_encontradas = 0
 
+        # Tira uma foto da tela final para fins de diagnóstico
+        page.screenshot(path="resultado.png")
+        print("📸 Captura de tela salva como 'resultado.png'.")
+
         for f in fontes:
             try:
-                # Verifica mensagens do sistema na página
-                texto_pagina = f.locator("body").inner_text()
-                if "incorreto" in texto_pagina.lower() or "inválido" in texto_pagina.lower():
-                    print("⚠️ AVISO DO PORTAL: CAPTCHA ou dado digitado incorretamente no portal.")
-                if "nenhum registro" in texto_pagina.lower() or "não há serviços" in texto_pagina.lower():
-                    print("ℹ️ AVISO DO PORTAL: Nenhum serviço/vaga disponível no momento.")
-
                 linhas = f.locator("tr")
                 total = linhas.count()
                 
@@ -235,11 +253,11 @@ def executar_busca():
         if linhas_encontradas == 0:
             print("Nenhuma tabela de vagas foi gerada nesta execução.")
         else:
-            print(f"Varredura concluída. {linhas_encontradas} vaga(s) exibida(s), mas nenhuma coincide com as datas desejadas.")
+            print(f"Varredura concluída. {linhas_encontradas} vaga(s) exibida(s).")
 
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
-                    
+        
