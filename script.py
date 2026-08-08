@@ -11,6 +11,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
+# Se desejar um convênio específico (ex: "Prefeitura de Niterói" ou None para manter o padrão)
+CONVENIO_DESEJADO = None  # Altere para "Prefeitura de Niterói" ou "Prefeitura de Maricá" se necessário
+
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
     "18/08/2026", "20/08/2026", "21/08/2026", "23/08/2026",
@@ -32,7 +35,6 @@ def ler_captcha_proeis(imagem_bytes):
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
-    # Testa modelos alternativos e faz tentativas se estourar o limite de requisições (429)
     modelos = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
     
     for modelo in modelos:
@@ -52,8 +54,8 @@ def ler_captcha_proeis(imagem_bytes):
                 if texto:
                     return texto
             except Exception as e:
-                print(f"Aviso: Tentativa {tentativa} no modelo {modelo} falhou: {e}")
-                time.sleep(10) # Aguarda 10 segundos antes de tentar novamente
+                print(f"Aviso: Tentativa {tentativa} no modelo {modelo} falhou. Aguardando 15s...")
+                time.sleep(15)
                 
     return ""
 
@@ -67,7 +69,7 @@ def executar_busca():
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # Step 1: Login na Área Restrita
+        # Step 1: Login
         if PROEIS_RG and PROEIS_SENHA:
             print("2. Preenchendo login (RG e Senha)...")
             try:
@@ -96,15 +98,17 @@ def executar_busca():
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Step 2: Selecionar Convênio e resolver segundo CAPTCHA
-        print("3. Selecionando Convênio e resolvendo segundo CAPTCHA...")
+        # Step 2: Seleção de Convênio (Apenas se especificado)
+        print("3. Verificando opções de consulta e resolvendo CAPTCHA da busca...")
         try:
-            select_convenio = page.locator("select")
-            if select_convenio.count() > 0:
-                try:
-                    select_convenio.first.select_option(label="Prefeitura de Maricá")
-                except Exception:
-                    select_convenio.first.select_option(index=1)
+            if CONVENIO_DESEJADO:
+                select_convenio = page.locator("select")
+                if select_convenio.count() > 0:
+                    try:
+                        select_convenio.first.select_option(label=CONVENIO_DESEJADO)
+                        print(f"Convênio selecionado: {CONVENIO_DESEJADO}")
+                    except Exception as e:
+                        print(f"Não foi possível selecionar o convênio {CONVENIO_DESEJADO}: {e}")
 
             inputs_busca = page.locator("input[type='text']")
             img_captcha_busca = page.locator("img[src*='captcha'], img")
@@ -126,7 +130,7 @@ def executar_busca():
         except Exception as e:
             print(f"Aviso na etapa de consulta de serviços vagos: {e}")
 
-        # Step 3: Varredura de tabelas e solicitação do serviço
+        # Step 3: Buscando e Clicando em "SOLICITAR SERVIÇO"
         print("4. Verificando tabela de vagas...")
         frames_para_checar = [page] + page.frames
 
@@ -135,20 +139,24 @@ def executar_busca():
                 linhas = fr.locator("tr")
                 qtd = linhas.count()
                 for i in range(qtd):
-                    texto = linhas.nth(i).inner_text()
+                    texto_linha = linhas.nth(i).inner_text()
+                    
                     for data in DATAS_DESEJADAS:
-                        if data in texto:
+                        if data in texto_linha:
                             print(f"🚨 Vaga encontrada para a data: {data}")
-                            btn = linhas.nth(i).locator("input[value*='SOLICITAR'], button:has-text('SOLICITAR')")
+                            
+                            # Busca o botão 'SOLICITAR SERVIÇO' na linha da data correspondente
+                            btn = linhas.nth(i).locator("input[value*='SOLICITAR'], button:has-text('SOLICITAR'), input[type='button'], input[type='submit']")
+                            
                             if btn.count() > 0:
                                 btn.first.click()
                                 time.sleep(3)
                                 avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
-                                print("Sucesso: Botão SOLICITAR clicado!")
+                                print("Sucesso: Botão SOLICITAR SERVIÇO clicado!")
                                 browser.close()
                                 return True
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Erro durante varredura: {e}")
 
         print("Nenhuma vaga desejada encontrada nesta rodada.")
         browser.close()
@@ -156,3 +164,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
+        
