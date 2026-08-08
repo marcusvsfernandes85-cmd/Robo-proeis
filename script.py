@@ -11,7 +11,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Mantenha None para buscar todos os convênios ou passe o nome exato (ex: "Prefeitura de Maricá")
 CONVENIO_DESEJADO = None
 
 DATAS_DESEJADAS = [
@@ -32,26 +31,31 @@ def avisar_telegram(mensagem):
     except Exception as e:
         print(f"Erro ao notificar Telegram: {e}")
 
+def obter_modelos_visao():
+    """Retorna lista de modelos que suportam entrada de imagem (exclui TTS/Áudio)."""
+    modelos_validos = []
+    try:
+        for m in client_gemini.models.list():
+            nome = m.name.replace("models/", "") if hasattr(m, "name") else ""
+            # Filtra modelos incompatíveis
+            if nome and not any(k in nome.lower() for k in ["tts", "audio", "embed"]):
+                modelos_validos.append(nome)
+    except Exception as e:
+        print(f"Aviso ao consultar modelos: {e}")
+
+    if not modelos_validos:
+        modelos_validos = ["gemma-4-26b-a4b-it", "gemini-2.5-flash", "gemini-1.5-flash"]
+        
+    return modelos_validos
+
 def ler_captcha_proeis(imagem_bytes):
     if not client_gemini:
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
-    # Obtém dinamicamente os modelos disponíveis diretamente da API
-    modelos_disponiveis = []
-    try:
-        for m in client_gemini.models.list():
-            nome = m.name.replace("models/", "") if hasattr(m, "name") else ""
-            if nome:
-                modelos_disponiveis.append(nome)
-    except Exception as e:
-        print(f"Aviso ao consultar modelos disponíveis na API: {e}")
+    modelos = obter_modelos_visao()
 
-    # Fallback caso a listagem falhe
-    if not modelos_disponiveis:
-        modelos_disponiveis = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-
-    for modelo in modelos_disponiveis:
+    for modelo in modelos:
         try:
             response = client_gemini.models.generate_content(
                 model=modelo,
@@ -60,17 +64,38 @@ def ler_captcha_proeis(imagem_bytes):
                         data=imagem_bytes,
                         mime_type="image/png",
                     ),
-                    "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
+                    "Analise a imagem. Se houver um CAPTCHA de letras e/ou números, responda EXATAMENTE com os caracteres visíveis sem espaços, pontuação ou texto adicional. Se não houver CAPTCHA, responda nada."
                 ]
             )
             texto = response.text.strip() if response.text else ""
-            if texto:
-                print(f"CAPTCHA lido com sucesso pelo modelo: {modelo}")
+            # Filtra respostas longas/explicativas
+            if texto and len(texto) <= 8 and not "não" in texto.lower():
+                print(f"CAPTCHA lido via {modelo}: {texto}")
                 return texto
-        except Exception as e:
-            print(f"Modelo {modelo} indisponível: {e}")
+        except Exception:
+            continue
 
     return ""
+
+def localizar_imagem_captcha(page_or_frame):
+    """Localiza especificamente a imagem do CAPTCHA evitando banners promocionais."""
+    seletores = [
+        "img[src*='captcha']",
+        "img[src*='Captcha']",
+        "img[id*='captcha']",
+        "form img"
+    ]
+    for sel in seletores:
+        loc = page_or_frame.locator(sel)
+        if loc.count() > 0:
+            for i in range(loc.count()):
+                elem = loc.nth(i)
+                if elem.is_visible():
+                    box = elem.bounding_box()
+                    # Filtra por dimensões típicas de CAPTCHA (evita banners grandes)
+                    if box and box["width"] < 300 and box["height"] < 150:
+                        return elem
+    return None
 
 def executar_busca():
     with sync_playwright() as p:
@@ -93,21 +118,20 @@ def executar_busca():
                     inputs_texto.first.fill(PROEIS_RG)
                     input_senha.first.fill(PROEIS_SENHA)
 
-                    img_captcha = page.locator("img[src*='captcha'], img")
-                    if img_captcha.count() > 0:
+                    img_captcha = localizar_imagem_captcha(page)
+                    if img_captcha:
                         print("Lendo CAPTCHA de login...")
-                        img_bytes = img_captcha.first.screenshot()
+                        img_bytes = img_captcha.screenshot()
                         texto_captcha = ler_captcha_proeis(img_bytes)
-                        print(f"CAPTCHA de login lido: {texto_captcha}")
-
+                        
                         if inputs_texto.count() > 1 and texto_captcha:
                             inputs_texto.nth(1).fill(texto_captcha)
 
                     btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
-                        print("Botão Entrar clicado. Aguardando área interna...")
-                        page.wait_for_timeout(3000)
+                        print("Botão Entrar clicado. Aguardando processamento...")
+                        page.wait_for_timeout(4000)
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
@@ -123,13 +147,12 @@ def executar_busca():
                         print(f"Não foi possível selecionar convênio: {e}")
 
             inputs_busca = page.locator("input[type='text']")
-            img_captcha_busca = page.locator("img[src*='captcha'], img")
+            img_captcha_busca = localizar_imagem_captcha(page)
             
-            if img_captcha_busca.count() > 0:
+            if img_captcha_busca:
                 print("Lendo CAPTCHA da tela de busca...")
-                img_bytes_busca = img_captcha_busca.last.screenshot()
+                img_bytes_busca = img_captcha_busca.screenshot()
                 texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
-                print(f"CAPTCHA de busca lido: {texto_captcha_busca}")
 
                 if inputs_busca.count() > 0 and texto_captcha_busca:
                     inputs_busca.last.fill(texto_captcha_busca)
@@ -177,4 +200,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-        
+    
