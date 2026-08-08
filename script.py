@@ -11,8 +11,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Se precisar filtrar por convênio específico, defina aqui ex: "Prefeitura de Maricá"
-CONVENIO_DESEJADO = os.getenv("CONVENIO_DESEJADO", None)
+# Nome exato do convênio no dropdown (ex: "Prefeitura de Maricá"). Se None, usará o selecionado.
+CONVENIO_DESEJADO = os.getenv("CONVENIO_DESEJADO", "Prefeitura de Maricá")
 
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
@@ -68,7 +68,7 @@ def ler_captcha_proeis(imagem_bytes):
             )
             texto = response.text.strip() if response.text else ""
             if texto and len(texto) <= 6 and not "não" in texto.lower():
-                print(f"CAPTCHA lido com sucesso ({modelo}): {texto}")
+                print(f"CAPTCHA lido com sucesso: {texto}")
                 return texto
         except Exception:
             continue
@@ -99,8 +99,8 @@ def executar_busca():
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        # Aceita caixas de confirmação nativas do navegador
-        page.on("dialog", lambda dialog: (print(f"Alerta confirmado: {dialog.message}"), dialog.accept()))
+        # Aceita caixas de diálogo nativas ("Tem certeza que deseja assumir este serviço?")
+        page.on("dialog", lambda dialog: (print(f"Diálogo de confirmação aceito: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
@@ -148,7 +148,6 @@ def executar_busca():
             except Exception:
                 continue
 
-        # Fallback JS caso o clique falhe
         page.evaluate("""
             () => {
                 const links = Array.from(document.querySelectorAll('a'));
@@ -158,19 +157,22 @@ def executar_busca():
         """)
         page.wait_for_timeout(3000)
 
-        # Passo 3: Filtro + CAPTCHA + VISUALIZAR
-        print("4. Resolvendo CAPTCHA do formulário de busca de vagas...")
+        # Passo 3: Seleção de Convênio + CAPTCHA + VISUALIZAR
+        print("4. Selecionando convênio e resolvendo CAPTCHA de busca...")
         fontes = [page] + page.frames
 
         for f in fontes:
             try:
                 btn_vis = f.locator("input[value='VISUALIZAR'], input[value='Visualizar']")
                 if btn_vis.count() > 0:
-                    # Se houver convênio especificado, seleciona no dropdown
-                    if CONVENIO_DESEJADO:
-                        select = f.locator("select")
-                        if select.count() > 0:
-                            select.first.select_option(label=CONVENIO_DESEJADO)
+                    select_elem = f.locator("select")
+                    if select_elem.count() > 0:
+                        if CONVENIO_DESEJADO:
+                            try:
+                                select_elem.first.select_option(label=CONVENIO_DESEJADO)
+                                print(f"Convênio '{CONVENIO_DESEJADO}' selecionado.")
+                            except Exception:
+                                print(f"Não foi possível selecionar '{CONVENIO_DESEJADO}' pelo rótulo, mantendo opção padrão.")
 
                     img_captcha_busca = localizar_imagem_captcha(f)
                     if img_captcha_busca:
@@ -188,39 +190,48 @@ def executar_busca():
             except Exception as e:
                 print(f"Erro ao submeter busca: {e}")
 
-        # Passo 4: Varredura de Vagas (Varre todas as células da tabela diretamente)
+        # Passo 4: Varredura detalhada na tabela
         print("5. Verificando vagas na tabela...")
         fontes = [page] + page.frames
 
+        vaga_encontrada = False
         for f in fontes:
             try:
-                # Busca por elementos que contenham a data desejada diretamente no texto
-                for data in DATAS_DESEJADAS:
-                    elementos_data = f.locator(f"tr:has-text('{data}')")
-                    count = elementos_data.count()
+                linhas = f.locator("tr")
+                total_linhas = linhas.count()
+                if total_linhas > 0:
+                    print(f"Total de linhas lidas na tabela: {total_linhas}")
                     
-                    if count > 0:
-                        print(f"🚨 Encontrada(s) {count} vaga(s) para a data {data}!")
+                    for i in range(total_linhas):
+                        texto_linha = linhas.nth(i).inner_text()
                         
-                        for i in range(count):
-                            linha = elementos_data.nth(i)
-                            btn_solicitar = linha.locator("input[value*='SOLICITAR'], button:has-text('SOLICITAR')")
-                            
-                            if btn_solicitar.count() > 0 and btn_solicitar.first.is_visible():
-                                print(f"Solicitando serviço para {data}...")
-                                btn_solicitar.first.click()
-                                page.wait_for_timeout(5000)
-                                avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
-                                print(f"Sucesso: Vaga assumida para {data}!")
-                                browser.close()
-                                return True
+                        # Verifica se alguma data procurada está nesta linha
+                        for data in DATAS_DESEJADAS:
+                            if data in texto_linha:
+                                print(f"🚨 Vaga encontrada para a data: {data}")
+                                vaga_encontrada = True
+                                
+                                btn_solicitar = linhas.nth(i).locator(
+                                    "input[value*='SOLICITAR'], button:has-text('SOLICITAR')"
+                                )
+                                
+                                if btn_solicitar.count() > 0 and btn_solicitar.first.is_visible():
+                                    print(f"Clicando em SOLICITAR SERVIÇO para {data}...")
+                                    btn_solicitar.first.click()
+                                    page.wait_for_timeout(5000)
+                                    avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
+                                    print(f"Sucesso: Vaga solicitada para {data}!")
+                                    browser.close()
+                                    return True
             except Exception as e:
-                print(f"Erro na verificação da tabela: {e}")
+                print(f"Erro ao ler tabela: {e}")
 
-        print("Nenhuma vaga desejada foi encontrada/solicitada nesta rodada.")
+        if not vaga_encontrada:
+            print("Nenhuma das datas cadastradas está presente na tabela carregada nesta rodada.")
+
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
-                                
+                    
