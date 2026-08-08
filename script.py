@@ -11,7 +11,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Se desejar um convênio específico (ex: "Prefeitura de Maricá"), altere aqui. Deixe None para pegar todos.
 CONVENIO_DESEJADO = None
 
 DATAS_DESEJADAS = [
@@ -37,27 +36,32 @@ def ler_captcha_proeis(imagem_bytes):
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
-    modelos = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
+    # Expandido com mais modelos de backup
+    modelos = [
+        "gemini-2.0-flash-lite", 
+        "gemini-2.0-flash", 
+        "gemini-1.5-flash", 
+        "gemini-1.5-flash-8b"
+    ]
     
     for modelo in modelos:
-        for tentativa in range(1, 3):
-            try:
-                response = client_gemini.models.generate_content(
-                    model=modelo,
-                    contents=[
-                        types.Part.from_bytes(
-                            data=imagem_bytes,
-                            mime_type="image/png",
-                        ),
-                        "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
-                    ]
-                )
-                texto = response.text.strip() if response.text else ""
-                if texto:
-                    return texto
-            except Exception as e:
-                print(f"Aviso: Tentativa {tentativa} no modelo {modelo} falhou (Cota/Erro). Aguardando 20s...")
-                time.sleep(20)
+        try:
+            response = client_gemini.models.generate_content(
+                model=modelo,
+                contents=[
+                    types.Part.from_bytes(
+                        data=imagem_bytes,
+                        mime_type="image/png",
+                    ),
+                    "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
+                ]
+            )
+            texto = response.text.strip() if response.text else ""
+            if texto:
+                return texto
+        except Exception as e:
+            print(f"Aviso: Modelo {modelo} indisponível/limite excedido. Tentando próximo...")
+            time.sleep(5)
                 
     return ""
 
@@ -89,7 +93,7 @@ def executar_busca():
                         texto_captcha = ler_captcha_proeis(img_bytes)
                         
                         if not texto_captcha:
-                            print("Erro: Não foi possível ler o CAPTCHA de login devido ao limite da API.")
+                            print("Erro: Não foi possível ler o CAPTCHA de login.")
                             browser.close()
                             return False
                             
@@ -106,6 +110,10 @@ def executar_busca():
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
+        # Pausa estratégica para liberar a cota de requisições do Gemini por minuto
+        print("Aguardando 12s para renovação da cota da API...")
+        time.sleep(12)
+
         # Step 2: Consulta
         print("3. Verificando opções de consulta e resolvendo CAPTCHA da busca...")
         try:
@@ -115,7 +123,7 @@ def executar_busca():
                     try:
                         select_convenio.first.select_option(label=CONVENIO_DESEJADO)
                     except Exception as e:
-                        print(f"Não foi possível selecionar o convênio {CONVENIO_DESEJADO}: {e}")
+                        print(f"Não foi possível selecionar o convênio: {e}")
 
             inputs_busca = page.locator("input[type='text']")
             img_captcha_busca = page.locator("img[src*='captcha'], img")
@@ -126,7 +134,7 @@ def executar_busca():
                 texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
                 
                 if not texto_captcha_busca:
-                    print("Erro: Não foi possível ler o CAPTCHA de busca por conta do limite de cota da API.")
+                    print("Erro: Não foi possível ler o CAPTCHA de busca por cota da API.")
                     browser.close()
                     return False
                     
@@ -176,3 +184,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
+                    
