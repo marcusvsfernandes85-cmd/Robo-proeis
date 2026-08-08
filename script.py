@@ -11,6 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
+# Defina o convênio se desejar filtrar (ex: "Prefeitura de Maricá"). Mantenha None para varrer todas as vagas.
 CONVENIO_DESEJADO = None
 
 DATAS_DESEJADAS = [
@@ -36,13 +37,7 @@ def ler_captcha_proeis(imagem_bytes):
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
-    # Expandido com mais modelos de backup
-    modelos = [
-        "gemini-2.0-flash-lite", 
-        "gemini-2.0-flash", 
-        "gemini-1.5-flash", 
-        "gemini-1.5-flash-8b"
-    ]
+    modelos = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
     
     for modelo in modelos:
         try:
@@ -60,9 +55,8 @@ def ler_captcha_proeis(imagem_bytes):
             if texto:
                 return texto
         except Exception as e:
-            print(f"Aviso: Modelo {modelo} indisponível/limite excedido. Tentando próximo...")
-            time.sleep(5)
-                
+            print(f"Aviso no modelo {modelo}: {e}")
+            
     return ""
 
 def executar_busca():
@@ -73,7 +67,7 @@ def executar_busca():
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2000)
 
         # Step 1: Login
         if PROEIS_RG and PROEIS_SENHA:
@@ -91,31 +85,21 @@ def executar_busca():
                         print("Lendo CAPTCHA de login...")
                         img_bytes = img_captcha.first.screenshot()
                         texto_captcha = ler_captcha_proeis(img_bytes)
-                        
-                        if not texto_captcha:
-                            print("Erro: Não foi possível ler o CAPTCHA de login.")
-                            browser.close()
-                            return False
-                            
                         print(f"CAPTCHA de login lido: {texto_captcha}")
 
-                        if inputs_texto.count() > 1:
+                        if inputs_texto.count() > 1 and texto_captcha:
                             inputs_texto.nth(1).fill(texto_captcha)
 
                     btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
                         print("Botão Entrar clicado. Aguardando área interna...")
-                        page.wait_for_timeout(4000)
+                        page.wait_for_timeout(3000)
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Pausa estratégica para liberar a cota de requisições do Gemini por minuto
-        print("Aguardando 12s para renovação da cota da API...")
-        time.sleep(12)
-
         # Step 2: Consulta
-        print("3. Verificando opções de consulta e resolvendo CAPTCHA da busca...")
+        print("3. Selecionando opções e lendo CAPTCHA da busca...")
         try:
             if CONVENIO_DESEJADO:
                 select_convenio = page.locator("select")
@@ -123,7 +107,7 @@ def executar_busca():
                     try:
                         select_convenio.first.select_option(label=CONVENIO_DESEJADO)
                     except Exception as e:
-                        print(f"Não foi possível selecionar o convênio: {e}")
+                        print(f"Não foi possível selecionar convênio: {e}")
 
             inputs_busca = page.locator("input[type='text']")
             img_captcha_busca = page.locator("img[src*='captcha'], img")
@@ -132,24 +116,18 @@ def executar_busca():
                 print("Lendo CAPTCHA da tela de busca...")
                 img_bytes_busca = img_captcha_busca.last.screenshot()
                 texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
-                
-                if not texto_captcha_busca:
-                    print("Erro: Não foi possível ler o CAPTCHA de busca por cota da API.")
-                    browser.close()
-                    return False
-                    
                 print(f"CAPTCHA de busca lido: {texto_captcha_busca}")
 
-                if inputs_busca.count() > 0:
+                if inputs_busca.count() > 0 and texto_captcha_busca:
                     inputs_busca.last.fill(texto_captcha_busca)
 
             btn_vis = page.locator("input[value='VISUALIZAR'], input[value='Visualizar'], button:has-text('VISUALIZAR')")
             if btn_vis.count() > 0:
                 btn_vis.first.click()
-                print("Botão VISUALIZAR clicado. Carregando lista de vagas...")
-                page.wait_for_timeout(5000)
+                print("Botão VISUALIZAR clicado. Carregando vagas...")
+                page.wait_for_timeout(4000)
         except Exception as e:
-            print(f"Aviso na etapa de consulta de serviços vagos: {e}")
+            print(f"Aviso na etapa de consulta: {e}")
 
         # Step 3: Inspeção e Varredura
         print("4. Verificando tabela de vagas...")
@@ -166,11 +144,13 @@ def executar_busca():
                         if data in texto_linha:
                             print(f"🚨 Vaga encontrada para a data: {data}")
                             
-                            btn = linhas.nth(i).locator("input[value*='SOLICITAR'], button:has-text('SOLICITAR'), input[type='button'], input[type='submit']")
+                            btn = linhas.nth(i).locator(
+                                "input[value*='SOLICITAR'], button:has-text('SOLICITAR'), input[type='button'], input[type='submit']"
+                            )
                             
                             if btn.count() > 0:
                                 btn.first.click()
-                                time.sleep(3)
+                                time.sleep(2)
                                 avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
                                 print("Sucesso: Botão SOLICITAR SERVIÇO clicado!")
                                 browser.close()
@@ -184,4 +164,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-                    
+            
