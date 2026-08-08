@@ -32,32 +32,51 @@ def avisar_telegram(mensagem):
     except Exception as e:
         print(f"Erro ao notificar Telegram: {e}")
 
+def obter_modelo_valido():
+    """Busca o modelo ativo para processamento de imagem."""
+    modelos_preferenciais = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
+    for m in modelos_preferenciais:
+        try:
+            client_gemini.models.get(model=m)
+            return m
+        except Exception:
+            continue
+            
+    # Se os nomes padrão falharem, busca na lista de modelos disponíveis na API
+    try:
+        for m in client_gemini.models.list():
+            if "flash" in m.name and "generateContent" in getattr(m, "supported_generation_methods", []):
+                return m.name.replace("models/", "")
+    except Exception:
+        pass
+        
+    return "gemini-2.0-flash-lite"
+
 def ler_captcha_proeis(imagem_bytes):
     if not client_gemini:
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
-    # Modelos vigentes e estáveis
-    modelos = ["gemini-2.5-flash", "gemini-1.5-flash"]
-    
-    for modelo in modelos:
-        try:
-            response = client_gemini.models.generate_content(
-                model=modelo,
-                contents=[
-                    types.Part.from_bytes(
-                        data=imagem_bytes,
-                        mime_type="image/png",
-                    ),
-                    "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
-                ]
-            )
-            texto = response.text.strip() if response.text else ""
-            if texto:
-                return texto
-        except Exception as e:
-            print(f"Aviso no modelo {modelo}: {e}")
-            
+    modelo_escolhido = obter_modelo_valido()
+    print(f"Usando modelo Gemini: {modelo_escolhido}")
+
+    try:
+        response = client_gemini.models.generate_content(
+            model=modelo_escolhido,
+            contents=[
+                types.Part.from_bytes(
+                    data=imagem_bytes,
+                    mime_type="image/png",
+                ),
+                "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
+            ]
+        )
+        texto = response.text.strip() if response.text else ""
+        if texto:
+            return texto
+    except Exception as e:
+        print(f"Erro ao ler CAPTCHA com {modelo_escolhido}: {e}")
+
     return ""
 
 def executar_busca():
@@ -165,4 +184,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-        
+    
