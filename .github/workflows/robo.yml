@@ -1,9 +1,10 @@
 name: Monitor PROEISBM
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/5 * * * *'  # Roda continuamente a cada 5 minutos
+  workflow_dispatch:      # Permite rodar manualmente a qualquer momento
+  
 
 jobs:
   executar:
