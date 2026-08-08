@@ -32,22 +32,30 @@ def ler_captcha_proeis(imagem_bytes):
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
-    try:
-        response = client_gemini.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(
-                    data=imagem_bytes,
-                    mime_type="image/png",
-                ),
-                "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
-            ]
-        )
-        texto = response.text.strip() if response.text else ""
-        return texto
-    except Exception as e:
-        print(f"Erro na leitura do CAPTCHA via Gemini: {e}")
-        return ""
+    # Testa modelos alternativos e faz tentativas se estourar o limite de requisições (429)
+    modelos = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
+    
+    for modelo in modelos:
+        for tentativa in range(1, 3):
+            try:
+                response = client_gemini.models.generate_content(
+                    model=modelo,
+                    contents=[
+                        types.Part.from_bytes(
+                            data=imagem_bytes,
+                            mime_type="image/png",
+                        ),
+                        "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
+                    ]
+                )
+                texto = response.text.strip() if response.text else ""
+                if texto:
+                    return texto
+            except Exception as e:
+                print(f"Aviso: Tentativa {tentativa} no modelo {modelo} falhou: {e}")
+                time.sleep(10) # Aguarda 10 segundos antes de tentar novamente
+                
+    return ""
 
 def executar_busca():
     with sync_playwright() as p:
@@ -148,4 +156,3 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-    
