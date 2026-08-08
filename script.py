@@ -93,18 +93,22 @@ def localizar_imagem_captcha(page_or_frame):
     return None
 
 def navegar_para_servicos_disponiveis(page):
-    """Busca o link 'Serviços Disponíveis' em todos os frames da página."""
-    frames = [page] + page.frames
-    for fr in frames:
-        try:
-            link = fr.locator("a:has-text('Serviços Disponíveis'), a[href*='disponivel'], a[href*='Disponivel']")
-            if link.count() > 0:
-                for i in range(link.count()):
-                    if link.nth(i).is_visible():
-                        link.nth(i).click()
-                        return True
-        except Exception:
-            continue
+    """Aguarda e clica na opção 'Serviços Disponíveis' do menu lateral."""
+    for _ in range(3):
+        frames = [page] + page.frames
+        for fr in frames:
+            try:
+                # Tenta localizar por texto exato do menu
+                link = fr.locator("a", has_text="Serviços Disponíveis")
+                if link.count() == 0:
+                    link = fr.locator("a[href*='disponiv']")
+                
+                if link.count() > 0 and link.first.is_visible():
+                    link.first.click()
+                    return True
+            except Exception:
+                continue
+        page.wait_for_timeout(2000)
     return False
 
 def executar_busca():
@@ -113,7 +117,7 @@ def executar_busca():
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        # Aceita caixas de confirmação nativas (como "Tem certeza que deseja assumir este serviço?")
+        # Confirma automaticamente qualquer caixa de diálogo/alerta
         page.on("dialog", lambda dialog: (print(f"Alerta confirmado: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
@@ -144,42 +148,52 @@ def executar_busca():
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
                         print("Botão Entrar clicado. Aguardando login...")
-                        page.wait_for_timeout(5000)
+                        # Aguarda a página pós-login carregar
+                        page.wait_for_load_state("networkidle")
+                        page.wait_for_timeout(4000)
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Step 2: Navegação no Menu Lateral
+        # Step 2: Navegação para "Serviços Disponíveis"
         print("3. Navegando para a página 'Serviços Disponíveis'...")
-        sucesso_navegacao = navegar_para_servicos_disponiveis(page)
-        if sucesso_navegacao:
+        if navegar_para_servicos_disponiveis(page):
             print("Link 'Serviços Disponíveis' clicado com sucesso.")
-            page.wait_for_timeout(4000)
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(3000)
         else:
-            print("Aviso: Link não encontrado via clique, tentando atualizar a visualização diretamente...")
+            print("Aviso: Não foi possível clicar em 'Serviços Disponíveis'. Tentando prosseguir...")
 
-        # Step 3: Consulta e CAPTCHA da tabela
+        # Step 3: Resolvendo CAPTCHA e clicando em VISUALIZAR
         print("4. Preenchendo busca e resolvendo CAPTCHA de serviços...")
         frames_para_busca = [page] + page.frames
+        busca_feita = False
+
         for fr in frames_para_busca:
             try:
                 img_captcha_busca = localizar_imagem_captcha(fr)
-                if img_captcha_busca:
-                    print("Lendo CAPTCHA da tela de busca de vagas...")
-                    img_bytes_busca = img_captcha_busca.screenshot()
-                    texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
-
-                    inputs = fr.locator("input[type='text']")
-                    if inputs.count() > 0 and texto_captcha_busca:
-                        inputs.last.fill(texto_captcha_busca)
-
                 btn_vis = fr.locator("input[value='VISUALIZAR'], input[value='Visualizar'], button:has-text('VISUALIZAR')")
-                if btn_vis.count() > 0:
+                
+                if btn_vis.count() > 0 and btn_vis.first.is_visible():
+                    if img_captcha_busca:
+                        print("Lendo CAPTCHA da tela de busca de vagas...")
+                        img_bytes_busca = img_captcha_busca.screenshot()
+                        texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
+
+                        inputs = fr.locator("input[type='text']")
+                        if inputs.count() > 0 and texto_captcha_busca:
+                            inputs.last.fill(texto_captcha_busca)
+
                     btn_vis.first.click()
                     print("Botão VISUALIZAR clicado. Carregando tabela de vagas...")
-                    page.wait_for_timeout(5000)
+                    page.wait_for_load_state("networkidle")
+                    page.wait_for_timeout(4000)
+                    busca_feita = True
                     break
             except Exception as e:
                 continue
+
+        if not busca_feita:
+            print("Aviso: Botão VISUALIZAR não foi encontrado nesta página.")
 
         # Step 4: Varredura da Tabela de Vagas
         print("5. Verificando tabela de vagas...")
