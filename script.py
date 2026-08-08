@@ -32,12 +32,10 @@ def avisar_telegram(mensagem):
         print(f"Erro ao notificar Telegram: {e}")
 
 def obter_modelos_visao():
-    """Retorna lista de modelos que suportam entrada de imagem (exclui TTS/Áudio)."""
     modelos_validos = []
     try:
         for m in client_gemini.models.list():
             nome = m.name.replace("models/", "") if hasattr(m, "name") else ""
-            # Filtra modelos incompatíveis
             if nome and not any(k in nome.lower() for k in ["tts", "audio", "embed"]):
                 modelos_validos.append(nome)
     except Exception as e:
@@ -64,13 +62,12 @@ def ler_captcha_proeis(imagem_bytes):
                         data=imagem_bytes,
                         mime_type="image/png",
                     ),
-                    "Analise a imagem. Se houver um CAPTCHA de letras e/ou números, responda EXATAMENTE com os caracteres visíveis sem espaços, pontuação ou texto adicional. Se não houver CAPTCHA, responda nada."
+                    "Retorne APENAS os 4 caracteres (letras e/ou números) do CAPTCHA desta imagem. Não escreva explicações nem pontuação."
                 ]
             )
             texto = response.text.strip() if response.text else ""
-            # Filtra respostas longas/explicativas
-            if texto and len(texto) <= 8 and not "não" in texto.lower():
-                print(f"CAPTCHA lido via {modelo}: {texto}")
+            if texto and len(texto) <= 6 and not "não" in texto.lower():
+                print(f"CAPTCHA lido com sucesso pelo modelo {modelo}: {texto}")
                 return texto
         except Exception:
             continue
@@ -78,7 +75,6 @@ def ler_captcha_proeis(imagem_bytes):
     return ""
 
 def localizar_imagem_captcha(page_or_frame):
-    """Localiza especificamente a imagem do CAPTCHA evitando banners promocionais."""
     seletores = [
         "img[src*='captcha']",
         "img[src*='Captcha']",
@@ -92,7 +88,6 @@ def localizar_imagem_captcha(page_or_frame):
                 elem = loc.nth(i)
                 if elem.is_visible():
                     box = elem.bounding_box()
-                    # Filtra por dimensões típicas de CAPTCHA (evita banners grandes)
                     if box and box["width"] < 300 and box["height"] < 150:
                         return elem
     return None
@@ -102,6 +97,9 @@ def executar_busca():
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
+
+        # Aceita automaticamente qualquer caixa de confirmação (Dialog/Alert/Confirm)
+        page.on("dialog", lambda dialog: (print(f"Mensagem do alerta aceita: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
@@ -130,43 +128,54 @@ def executar_busca():
                     btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
-                        print("Botão Entrar clicado. Aguardando processamento...")
+                        print("Botão Entrar clicado. Aguardando login...")
                         page.wait_for_timeout(4000)
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Step 2: Consulta
-        print("3. Selecionando opções e lendo CAPTCHA da busca...")
+        # Step 2: Navegação no Menu Restrito -> Serviços Disponíveis
+        print("3. Navegando para a página 'Serviços Disponíveis'...")
+        try:
+            link_servicos = page.locator("a:has-text('Serviços Disponíveis'), a[href*='disponivel']")
+            if link_servicos.count() > 0:
+                link_servicos.first.click()
+                page.wait_for_timeout(3000)
+            else:
+                print("Aviso: Link 'Serviços Disponíveis' não encontrado no menu.")
+        except Exception as e:
+            print(f"Aviso na navegação do menu: {e}")
+
+        # Step 3: Consulta com CAPTCHA de busca e clique em VISUALIZAR
+        print("4. Preenchendo busca e resolvendo CAPTCHA de serviços...")
         try:
             if CONVENIO_DESEJADO:
                 select_convenio = page.locator("select")
                 if select_convenio.count() > 0:
                     try:
                         select_convenio.first.select_option(label=CONVENIO_DESEJADO)
-                    except Exception as e:
-                        print(f"Não foi possível selecionar convênio: {e}")
+                    except Exception:
+                        pass
 
-            inputs_busca = page.locator("input[type='text']")
             img_captcha_busca = localizar_imagem_captcha(page)
-            
             if img_captcha_busca:
-                print("Lendo CAPTCHA da tela de busca...")
+                print("Lendo CAPTCHA da tela de busca de vagas...")
                 img_bytes_busca = img_captcha_busca.screenshot()
                 texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
 
-                if inputs_busca.count() > 0 and texto_captcha_busca:
-                    inputs_busca.last.fill(texto_captcha_busca)
+                input_captcha_busca = page.locator("input[type='text']").last
+                if texto_captcha_busca and input_captcha_busca:
+                    input_captcha_busca.fill(texto_captcha_busca)
 
             btn_vis = page.locator("input[value='VISUALIZAR'], input[value='Visualizar'], button:has-text('VISUALIZAR')")
             if btn_vis.count() > 0:
                 btn_vis.first.click()
-                print("Botão VISUALIZAR clicado. Carregando vagas...")
-                page.wait_for_timeout(4000)
+                print("Botão VISUALIZAR clicado. Carregando tabela de vagas...")
+                page.wait_for_timeout(5000)
         except Exception as e:
-            print(f"Aviso na etapa de consulta: {e}")
+            print(f"Aviso ao submeter consulta de vagas: {e}")
 
-        # Step 3: Inspeção e Varredura
-        print("4. Verificando tabela de vagas...")
+        # Step 4: Varredura da Tabela de Vagas
+        print("5. Verificando tabela de vagas...")
         frames_para_checar = [page] + page.frames
 
         for fr in frames_para_checar:
@@ -185,10 +194,11 @@ def executar_busca():
                             )
                             
                             if btn.count() > 0:
+                                print("Clicando no botão SOLICITAR SERVIÇO...")
                                 btn.first.click()
-                                time.sleep(2)
-                                avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
-                                print("Sucesso: Botão SOLICITAR SERVIÇO clicado!")
+                                page.wait_for_timeout(3000)
+                                avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
+                                print("Sucesso: Confirmação realizada e vaga solicitada!")
                                 browser.close()
                                 return True
             except Exception as e:
