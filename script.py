@@ -11,7 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Defina o convênio desejado ou mantenha None para usar a seleção padrão do portal
+# Defina o convênio desejado se necessário (ex: "Prefeitura de Maricá")
 CONVENIO_DESEJADO = os.getenv("CONVENIO_DESEJADO", None)
 
 DATAS_DESEJADAS = [
@@ -99,7 +99,7 @@ def executar_busca():
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        # Confirma automaticamente a caixa "Tem certeza que deseja assumir este serviço?"
+        # Aceita avisos/diálogos de confirmação automaticamente
         page.on("dialog", lambda dialog: (print(f"Diálogo aceito: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
@@ -134,7 +134,7 @@ def executar_busca():
             except Exception as e:
                 print(f"Erro no login: {e}")
 
-        # Passo 2: Menu Restrito -> Serviços Disponíveis
+        # Passo 2: Navegar até Serviços Disponíveis
         print("3. Navegando até 'Serviços Disponíveis'...")
         fontes = [page] + page.frames
         for f in fontes:
@@ -183,17 +183,19 @@ def executar_busca():
                             inputs.last.fill(texto_captcha_busca)
 
                     btn_vis.first.click()
-                    print("Botão VISUALIZAR clicado. Aguardando tabela carregar...")
-                    page.wait_for_timeout(6000)
+                    print("Botão VISUALIZAR clicado. Aguardando atualização do formulário...")
+                    page.wait_for_timeout(7000)
                     break
             except Exception as e:
                 print(f"Erro ao submeter busca: {e}")
 
-        # Passo 4: Varredura detalhada na tabela e exibição dos registros lidos
+        # Passo 4: Filtragem e Varredura Exclusiva na Tabela de Vagas
         print("5. Verificando vagas na tabela...")
         fontes = [page] + page.frames
 
         vaga_solicitada = False
+        palavras_ignorar = ["cookie", "gdpr", "consent", "privacidade", "lawinfo"]
+
         for f in fontes:
             try:
                 linhas = f.locator("tr")
@@ -204,16 +206,19 @@ def executar_busca():
                         texto_raw = linhas.nth(i).inner_text()
                         texto_linha = texto_raw.replace('\xa0', ' ').strip()
                         
-                        # Exibe a linha lida no log para auditoria (ignora cabeçalhos simples)
-                        if len(texto_linha) > 10:
-                            print(f"Linha [{i+1}]: {texto_linha}")
+                        # Filtra e ignora linhas da tabela de avisos de cookies/LGPD
+                        if any(kw in texto_linha.lower() for kw in palavras_ignorar):
+                            continue
+                        
+                        if len(texto_linha) > 5:
+                            print(f"Vaga/Registro [{i+1}]: {texto_linha}")
 
                         for data in DATAS_DESEJADAS:
                             if data in texto_linha:
                                 print(f"🚨 VAGA ENCONTRADA PARA A DATA: {data}")
                                 
                                 btn_solicitar = linhas.nth(i).locator(
-                                    "input[value*='SOLICITAR'], button:has-text('SOLICITAR')"
+                                    "input[value*='SOLICITAR'], button:has-text('SOLICITAR'), a:has-text('SOLICITAR')"
                                 )
                                 
                                 if btn_solicitar.count() > 0 and btn_solicitar.first.is_visible():
@@ -229,11 +234,11 @@ def executar_busca():
                 print(f"Erro ao ler tabela: {e}")
 
         if not vaga_solicitada:
-            print("Fim da varredura. Nenhuma das datas desejadas bateu com a tabela atual.")
+            print("Fim da varredura. Nenhuma das datas desejadas foi encontrada na tabela de serviços.")
 
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
-    
+            
