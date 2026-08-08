@@ -11,7 +11,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Defina o convênio desejado se necessário (ex: "Prefeitura de Maricá")
 CONVENIO_DESEJADO = os.getenv("CONVENIO_DESEJADO", None)
 
 DATAS_DESEJADAS = [
@@ -63,12 +62,12 @@ def ler_captcha_proeis(imagem_bytes):
                         data=imagem_bytes,
                         mime_type="image/png",
                     ),
-                    "Retorne APENAS os 4 caracteres (letras e/ou números) do CAPTCHA desta imagem. Não escreva explicações nem pontuação."
+                    "Retorne APENAS os 4 caracteres do CAPTCHA desta imagem. Não inclua pontuação ou espaços."
                 ]
             )
             texto = response.text.strip() if response.text else ""
             if texto and len(texto) <= 6 and not "não" in texto.lower():
-                print(f"CAPTCHA lido com sucesso: {texto}")
+                print(f"CAPTCHA lido ({modelo}): {texto}")
                 return texto
         except Exception:
             continue
@@ -99,14 +98,13 @@ def executar_busca():
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        # Aceita avisos/diálogos de confirmação automaticamente
-        page.on("dialog", lambda dialog: (print(f"Diálogo aceito: {dialog.message}"), dialog.accept()))
+        page.on("dialog", lambda dialog: (print(f"Alerta do sistema: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(2000)
 
-        # Passo 1: Login
+        # 1. Login
         if PROEIS_RG and PROEIS_SENHA:
             print("2. Preenchendo credenciais de login...")
             try:
@@ -122,7 +120,6 @@ def executar_busca():
                         print("Lendo CAPTCHA de login...")
                         img_bytes = img_captcha.screenshot()
                         texto_captcha = ler_captcha_proeis(img_bytes)
-                        
                         if inputs_texto.count() > 1 and texto_captcha:
                             inputs_texto.nth(1).fill(texto_captcha)
 
@@ -134,7 +131,7 @@ def executar_busca():
             except Exception as e:
                 print(f"Erro no login: {e}")
 
-        # Passo 2: Navegar até Serviços Disponíveis
+        # 2. Navegação
         print("3. Navegando até 'Serviços Disponíveis'...")
         fontes = [page] + page.frames
         for f in fontes:
@@ -157,7 +154,7 @@ def executar_busca():
         """)
         page.wait_for_timeout(3000)
 
-        # Passo 3: Seleção de Convênio + CAPTCHA + VISUALIZAR
+        # 3. Form da Busca + Resolução de CAPTCHA
         print("4. Selecionando convênio e resolvendo CAPTCHA de busca...")
         fontes = [page] + page.frames
 
@@ -169,7 +166,7 @@ def executar_busca():
                     if select_elem.count() > 0 and CONVENIO_DESEJADO:
                         try:
                             select_elem.first.select_option(label=CONVENIO_DESEJADO)
-                            print(f"Convênio '{CONVENIO_DESEJADO}' selecionado.")
+                            print(f"Convênio selecionado: '{CONVENIO_DESEJADO}'")
                         except Exception:
                             print(f"Não foi possível selecionar '{CONVENIO_DESEJADO}'.")
 
@@ -183,61 +180,66 @@ def executar_busca():
                             inputs.last.fill(texto_captcha_busca)
 
                     btn_vis.first.click()
-                    print("Botão VISUALIZAR clicado. Aguardando atualização do formulário...")
-                    page.wait_for_timeout(7000)
+                    print("Botão VISUALIZAR clicado. Aguardando dados...")
+                    page.wait_for_timeout(6000)
                     break
             except Exception as e:
-                print(f"Erro ao submeter busca: {e}")
+                print(f"Erro na submissão da busca: {e}")
 
-        # Passo 4: Filtragem e Varredura Exclusiva na Tabela de Vagas
-        print("5. Verificando vagas na tabela...")
+        # 4. Varredura com verificação de erros na tela
+        print("5. Verificando resultado da busca...")
         fontes = [page] + page.frames
 
-        vaga_solicitada = False
-        palavras_ignorar = ["cookie", "gdpr", "consent", "privacidade", "lawinfo"]
+        palavras_ignorar = ["cookie", "gdpr", "consent", "privacidade", "lawinfo", "javascript"]
+        linhas_encontradas = 0
 
         for f in fontes:
             try:
+                # Verifica mensagens do sistema na página
+                texto_pagina = f.locator("body").inner_text()
+                if "incorreto" in texto_pagina.lower() or "inválido" in texto_pagina.lower():
+                    print("⚠️ AVISO DO PORTAL: CAPTCHA ou dado digitado incorretamente no portal.")
+                if "nenhum registro" in texto_pagina.lower() or "não há serviços" in texto_pagina.lower():
+                    print("ℹ️ AVISO DO PORTAL: Nenhum serviço/vaga disponível no momento.")
+
                 linhas = f.locator("tr")
-                total_linhas = linhas.count()
+                total = linhas.count()
                 
-                if total_linhas > 0:
-                    for i in range(total_linhas):
-                        texto_raw = linhas.nth(i).inner_text()
-                        texto_linha = texto_raw.replace('\xa0', ' ').strip()
-                        
-                        # Filtra e ignora linhas da tabela de avisos de cookies/LGPD
-                        if any(kw in texto_linha.lower() for kw in palavras_ignorar):
-                            continue
-                        
-                        if len(texto_linha) > 5:
-                            print(f"Vaga/Registro [{i+1}]: {texto_linha}")
+                for i in range(total):
+                    texto_raw = linhas.nth(i).inner_text()
+                    texto_linha = texto_raw.replace('\xa0', ' ').strip()
+                    
+                    if any(kw in texto_linha.lower() for kw in palavras_ignorar):
+                        continue
+                    
+                    if len(texto_linha) > 15:
+                        linhas_encontradas += 1
+                        print(f"Linha de Vaga [{linhas_encontradas}]: {texto_linha}")
 
                         for data in DATAS_DESEJADAS:
                             if data in texto_linha:
                                 print(f"🚨 VAGA ENCONTRADA PARA A DATA: {data}")
-                                
                                 btn_solicitar = linhas.nth(i).locator(
                                     "input[value*='SOLICITAR'], button:has-text('SOLICITAR'), a:has-text('SOLICITAR')"
                                 )
-                                
                                 if btn_solicitar.count() > 0 and btn_solicitar.first.is_visible():
-                                    print(f"Clicando em SOLICITAR SERVIÇO para {data}...")
+                                    print(f"Solicitando serviço para {data}...")
                                     btn_solicitar.first.click()
                                     page.wait_for_timeout(5000)
                                     avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
-                                    print(f"Sucesso: Vaga solicitada para {data}!")
-                                    vaga_solicitada = True
                                     browser.close()
                                     return True
             except Exception as e:
                 print(f"Erro ao ler tabela: {e}")
 
-        if not vaga_solicitada:
-            print("Fim da varredura. Nenhuma das datas desejadas foi encontrada na tabela de serviços.")
+        if linhas_encontradas == 0:
+            print("Nenhuma tabela de vagas foi gerada nesta execução.")
+        else:
+            print(f"Varredura concluída. {linhas_encontradas} vaga(s) exibida(s), mas nenhuma coincide com as datas desejadas.")
 
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
+                    
