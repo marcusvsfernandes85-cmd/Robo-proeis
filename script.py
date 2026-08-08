@@ -28,33 +28,14 @@ def avisar_telegram(mensagem):
     except Exception as e:
         print(f"Erro ao notificar Telegram: {e}")
 
- def resolver_captcha_proeis(imagem_bytes):
+def ler_captcha_proeis(imagem_bytes):
     if not client_gemini:
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
-
-    try:
-        response = client_gemini.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=[
-                types.Part.from_bytes(
-                    data=imagem_bytes,
-                    mime_type="image/png",
-                ),
-                "Retorne APENAS os 4 caracteres (letras/números)"
-            ]
-        )
-        texto = response.text.strip() if response.text else ""
-        return texto
-    except Exception as e:
-        print(f"Erro na leitura do CAPTCHA via Gemini: {e}")
-        return ""
-  ""
     
     try:
         response = client_gemini.models.generate_content(
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            ,
+            model="gemini-2.5-flash",
             contents=[
                 types.Part.from_bytes(
                     data=imagem_bytes,
