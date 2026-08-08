@@ -11,7 +11,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Incluída a data 23/08/2026 na lista
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
     "18/08/2026", "20/08/2026", "21/08/2026", "23/08/2026",
@@ -88,10 +87,9 @@ def executar_busca():
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Step 2: Navegar na tela de Serviços Vagos (Filtro por Convênio + Captcha 2)
+        # Step 2: Selecionar Convênio e resolver segundo CAPTCHA
         print("3. Selecionando Convênio e resolvendo segundo CAPTCHA...")
         try:
-            # Seleciona 'Prefeitura de Maricá' ou primeira opção se disponível
             select_convenio = page.locator("select")
             if select_convenio.count() > 0:
                 try:
@@ -99,7 +97,6 @@ def executar_busca():
                 except Exception:
                     select_convenio.first.select_option(index=1)
 
-            # Resolve o segundo CAPTCHA (da tela de busca)
             inputs_busca = page.locator("input[type='text']")
             img_captcha_busca = page.locator("img[src*='captcha'], img")
             
@@ -112,7 +109,6 @@ def executar_busca():
                 if inputs_busca.count() > 0:
                     inputs_busca.last.fill(texto_captcha_busca)
 
-            # Clica em VISUALIZAR
             btn_vis = page.locator("input[value='VISUALIZAR'], input[value='Visualizar'], button:has-text('VISUALIZAR')")
             if btn_vis.count() > 0:
                 btn_vis.first.click()
