@@ -11,7 +11,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Lista de datas de interesse
+# Se precisar filtrar por convênio específico, defina aqui ex: "Prefeitura de Maricá"
+CONVENIO_DESEJADO = os.getenv("CONVENIO_DESEJADO", None)
+
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
     "18/08/2026", "20/08/2026", "21/08/2026", "23/08/2026",
@@ -66,7 +68,7 @@ def ler_captcha_proeis(imagem_bytes):
             )
             texto = response.text.strip() if response.text else ""
             if texto and len(texto) <= 6 and not "não" in texto.lower():
-                print(f"CAPTCHA lido com sucesso: {texto}")
+                print(f"CAPTCHA lido com sucesso ({modelo}): {texto}")
                 return texto
         except Exception:
             continue
@@ -97,14 +99,14 @@ def executar_busca():
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        # Aceita automaticamente a caixa de diálogo "Tem certeza que deseja assumir este serviço?"
-        page.on("dialog", lambda dialog: (print(f"Diálogo de confirmação aceito: {dialog.message}"), dialog.accept()))
+        # Aceita caixas de confirmação nativas do navegador
+        page.on("dialog", lambda dialog: (print(f"Alerta confirmado: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(2000)
 
-        # Passo 1: Realizar Login
+        # Passo 1: Login
         if PROEIS_RG and PROEIS_SENHA:
             print("2. Preenchendo credenciais de login...")
             try:
@@ -132,82 +134,81 @@ def executar_busca():
             except Exception as e:
                 print(f"Erro no login: {e}")
 
-        # Passo 2: Clicar em "Serviços Disponíveis" no Menu Restrito
+        # Passo 2: Menu Restrito -> Serviços Disponíveis
         print("3. Navegando até 'Serviços Disponíveis'...")
-        clicado_menu = False
         fontes = [page] + page.frames
-
         for f in fontes:
             try:
-                link_servicos = f.locator("a", has_text="Serviços Disponíveis")
-                if link_servicos.count() > 0 and link_servicos.first.is_visible():
-                    link_servicos.first.click()
-                    clicado_menu = True
+                link = f.locator("a", has_text="Serviços Disponíveis")
+                if link.count() > 0 and link.first.is_visible():
+                    link.first.click()
                     print("Menu 'Serviços Disponíveis' clicado.")
                     page.wait_for_timeout(4000)
                     break
             except Exception:
                 continue
 
-        if not clicado_menu:
-            print("Aviso: Tentando clique forçado no link do menu...")
-            page.evaluate("""
-                () => {
-                    const links = Array.from(document.querySelectorAll('a'));
-                    const target = links.find(a => a.textContent.includes('Serviços Disponíveis'));
-                    if (target) target.click();
-                }
-            """)
-            page.wait_for_timeout(4000)
+        # Fallback JS caso o clique falhe
+        page.evaluate("""
+            () => {
+                const links = Array.from(document.querySelectorAll('a'));
+                const target = links.find(a => a.textContent.includes('Serviços Disponíveis'));
+                if (target) target.click();
+            }
+        """)
+        page.wait_for_timeout(3000)
 
-        # Passo 3: Preencher CAPTCHA de SERVIÇOS VAGOS e clicar em VISUALIZAR
+        # Passo 3: Filtro + CAPTCHA + VISUALIZAR
         print("4. Resolvendo CAPTCHA do formulário de busca de vagas...")
         fontes = [page] + page.frames
-        busca_submetida = False
 
         for f in fontes:
             try:
                 btn_vis = f.locator("input[value='VISUALIZAR'], input[value='Visualizar']")
                 if btn_vis.count() > 0:
+                    # Se houver convênio especificado, seleciona no dropdown
+                    if CONVENIO_DESEJADO:
+                        select = f.locator("select")
+                        if select.count() > 0:
+                            select.first.select_option(label=CONVENIO_DESEJADO)
+
                     img_captcha_busca = localizar_imagem_captcha(f)
                     if img_captcha_busca:
                         img_bytes_busca = img_captcha_busca.screenshot()
                         texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
 
-                        campo_captcha = f.locator("input[type='text']").last
-                        if texto_captcha_busca and campo_captcha:
-                            campo_captcha.fill(texto_captcha_busca)
+                        inputs = f.locator("input[type='text']")
+                        if inputs.count() > 0 and texto_captcha_busca:
+                            inputs.last.fill(texto_captcha_busca)
 
                     btn_vis.first.click()
-                    print("Botão VISUALIZAR clicado. Carregando tabela de vagas...")
-                    page.wait_for_timeout(5000)
-                    busca_submetida = True
+                    print("Botão VISUALIZAR clicado. Aguardando tabela carregar...")
+                    page.wait_for_timeout(6000)
                     break
             except Exception as e:
                 print(f"Erro ao submeter busca: {e}")
 
-        # Passo 4: Varredura na Tabela de Vagas e Solicitação do Serviço
+        # Passo 4: Varredura de Vagas (Varre todas as células da tabela diretamente)
         print("5. Verificando vagas na tabela...")
         fontes = [page] + page.frames
 
         for f in fontes:
             try:
-                linhas = f.locator("tr")
-                qtd = linhas.count()
-                for i in range(qtd):
-                    texto_linha = linhas.nth(i).inner_text()
+                # Busca por elementos que contenham a data desejada diretamente no texto
+                for data in DATAS_DESEJADAS:
+                    elementos_data = f.locator(f"tr:has-text('{data}')")
+                    count = elementos_data.count()
                     
-                    for data in DATAS_DESEJADAS:
-                        if data in texto_linha:
-                            print(f"🚨 Vaga encontrada para a data: {data}")
+                    if count > 0:
+                        print(f"🚨 Encontrada(s) {count} vaga(s) para a data {data}!")
+                        
+                        for i in range(count):
+                            linha = elementos_data.nth(i)
+                            btn_solicitar = linha.locator("input[value*='SOLICITAR'], button:has-text('SOLICITAR')")
                             
-                            btn = linhas.nth(i).locator(
-                                "input[value*='SOLICITAR'], button:has-text('SOLICITAR SERVIÇO')"
-                            )
-                            
-                            if btn.count() > 0:
-                                print("Clicando no botão SOLICITAR SERVIÇO...")
-                                btn.first.click()
+                            if btn_solicitar.count() > 0 and btn_solicitar.first.is_visible():
+                                print(f"Solicitando serviço para {data}...")
+                                btn_solicitar.first.click()
                                 page.wait_for_timeout(5000)
                                 avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
                                 print(f"Sucesso: Vaga assumida para {data}!")
@@ -216,10 +217,10 @@ def executar_busca():
             except Exception as e:
                 print(f"Erro na verificação da tabela: {e}")
 
-        print("Nenhuma vaga desejada foi encontrada nesta rodada.")
+        print("Nenhuma vaga desejada foi encontrada/solicitada nesta rodada.")
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
-            
+                                
