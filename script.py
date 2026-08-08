@@ -11,10 +11,11 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
+# Incluída a data 23/08/2026 na lista
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
-    "18/08/2026", "20/08/2026", "21/08/2026", "23/08/2026", "24/08/2026", 
-    "26/08/2026", "27/08/2026", "30/08/2026"
+    "18/08/2026", "20/08/2026", "21/08/2026", "23/08/2026",
+    "24/08/2026", "26/08/2026", "27/08/2026", "30/08/2026"
 ]
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -48,19 +49,6 @@ def ler_captcha_proeis(imagem_bytes):
     )
     return resposta.content[0].text.strip()
 
-def buscar_em_todos_frames(page, seletor):
-    loc = page.locator(seletor)
-    if loc.count() > 0:
-        return page, loc
-    for frame in page.frames:
-        try:
-            loc_f = frame.locator(seletor)
-            if loc_f.count() > 0:
-                return frame, loc_f
-        except Exception:
-            pass
-    return None, None
-
 def executar_busca():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -71,7 +59,7 @@ def executar_busca():
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(3000)
 
-        # Login na Area Restrita
+        # Step 1: Login na Área Restrita
         if PROEIS_RG and PROEIS_SENHA:
             print("2. Preenchendo login (RG e Senha)...")
             try:
@@ -87,7 +75,7 @@ def executar_busca():
                         print("Lendo CAPTCHA de login...")
                         img_bytes = img_captcha.first.screenshot()
                         texto_captcha = ler_captcha_proeis(img_bytes)
-                        print(f"CAPTCHA lido: {texto_captcha}")
+                        print(f"CAPTCHA de login lido: {texto_captcha}")
 
                         if inputs_texto.count() > 1:
                             inputs_texto.nth(1).fill(texto_captcha)
@@ -95,13 +83,46 @@ def executar_busca():
                     btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
-                        print("Botao Entrar clicado. Aguardando login...")
-                        page.wait_for_timeout(5000)
+                        print("Botão Entrar clicado. Aguardando área interna...")
+                        page.wait_for_timeout(4000)
             except Exception as e:
                 print(f"Aviso ao efetuar login: {e}")
 
-        # Busca por vagas
-        print("3. Verificando vagas na area interna...")
+        # Step 2: Navegar na tela de Serviços Vagos (Filtro por Convênio + Captcha 2)
+        print("3. Selecionando Convênio e resolvendo segundo CAPTCHA...")
+        try:
+            # Seleciona 'Prefeitura de Maricá' ou primeira opção se disponível
+            select_convenio = page.locator("select")
+            if select_convenio.count() > 0:
+                try:
+                    select_convenio.first.select_option(label="Prefeitura de Maricá")
+                except Exception:
+                    select_convenio.first.select_option(index=1)
+
+            # Resolve o segundo CAPTCHA (da tela de busca)
+            inputs_busca = page.locator("input[type='text']")
+            img_captcha_busca = page.locator("img[src*='captcha'], img")
+            
+            if img_captcha_busca.count() > 0:
+                print("Lendo CAPTCHA da tela de busca...")
+                img_bytes_busca = img_captcha_busca.last.screenshot()
+                texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
+                print(f"CAPTCHA de busca lido: {texto_captcha_busca}")
+
+                if inputs_busca.count() > 0:
+                    inputs_busca.last.fill(texto_captcha_busca)
+
+            # Clica em VISUALIZAR
+            btn_vis = page.locator("input[value='VISUALIZAR'], input[value='Visualizar'], button:has-text('VISUALIZAR')")
+            if btn_vis.count() > 0:
+                btn_vis.first.click()
+                print("Botão VISUALIZAR clicado. Carregando lista de vagas...")
+                page.wait_for_timeout(5000)
+        except Exception as e:
+            print(f"Aviso na etapa de consulta de serviços vagos: {e}")
+
+        # Step 3: Varredura de tabelas e solicitação do serviço
+        print("4. Verificando tabela de vagas...")
         frames_para_checar = [page] + page.frames
 
         for fr in frames_para_checar:
@@ -118,13 +139,13 @@ def executar_busca():
                                 btn.first.click()
                                 time.sleep(3)
                                 avisar_telegram(f"🚨 VAGA SOLICITADA COM SUCESSO! Data: {data}")
-                                print("Sucesso: Botao clicado!")
+                                print("Sucesso: Botão SOLICITAR clicado!")
                                 browser.close()
                                 return True
             except Exception:
                 pass
 
-        print("Nenhuma vaga desejada encontrada.")
+        print("Nenhuma vaga desejada encontrada nesta rodada.")
         browser.close()
         return False
 
