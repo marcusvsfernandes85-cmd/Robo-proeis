@@ -11,7 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Defina o convênio se desejar filtrar (ex: "Prefeitura de Maricá"). Mantenha None para varrer todas as vagas.
+# Mantenha None para buscar todos os convênios ou passe o nome exato (ex: "Prefeitura de Maricá")
 CONVENIO_DESEJADO = None
 
 DATAS_DESEJADAS = [
@@ -37,7 +37,8 @@ def ler_captcha_proeis(imagem_bytes):
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
-    modelos = ["gemini-2.0-flash-lite", "gemini-2.0-flash"]
+    # Modelos vigentes e estáveis
+    modelos = ["gemini-2.5-flash", "gemini-1.5-flash"]
     
     for modelo in modelos:
         try:
@@ -164,4 +165,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-            
+        
