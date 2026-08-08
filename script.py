@@ -1,9 +1,7 @@
 import os
 import time
-import base64
 import requests
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from playwright.sync_api import sync_playwright
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -18,7 +16,8 @@ DATAS_DESEJADAS = [
     "24/08/2026", "26/08/2026", "27/08/2026", "30/08/2026"
 ]
 
-client_gemini = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 def avisar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -29,21 +28,16 @@ def avisar_telegram(mensagem):
         print(f"Erro ao notificar Telegram: {e}")
 
 def ler_captcha_proeis(imagem_bytes):
-    if not client_gemini:
+    if not GEMINI_API_KEY:
         print("Erro: GEMINI_API_KEY não configurada.")
         return ""
     
     try:
-        response = client_gemini.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=[
-                types.Part.from_bytes(
-                    data=imagem_bytes,
-                    mime_type="image/png",
-                ),
-                "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
-            ]
-        )
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content([
+            {"mime_type": "image/png", "data": imagem_bytes},
+            "Retorne APENAS os 4 caracteres (letras/números) visíveis nesta imagem de CAPTCHA. Não inclua espaços nem pontuação."
+        ])
         texto = response.text.strip() if response.text else ""
         return texto
     except Exception as e:
@@ -149,4 +143,3 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-            
