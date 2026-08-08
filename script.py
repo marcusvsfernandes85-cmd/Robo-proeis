@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import requests
 from google import genai
@@ -70,13 +71,17 @@ def ler_captcha_proeis(imagem_bytes):
                         data=imagem_bytes,
                         mime_type="image/png",
                     ),
-                    "Retorne APENAS os 4 caracteres do CAPTCHA desta imagem. Não inclua pontuação ou espaços."
+                    "Retorne APENAS os caracteres alfa-numéricos (A-Z, 0-9) visíveis no CAPTCHA. Não use caracteres especiais ou outros idiomas."
                 ]
             )
-            texto = response.text.strip() if response.text else ""
-            if texto and len(texto) <= 6 and not "não" in texto.lower():
-                print(f"CAPTCHA lido ({modelo}): {texto}")
-                return texto
+            texto_raw = response.text.strip() if response.text else ""
+            
+            # Filtra estritamente apenas letras e números ASCII (remove árabe, cirílico, pontuação, etc)
+            texto_limpo = re.sub(r'[^a-zA-Z0-9]', '', texto_raw)
+            
+            if texto_limpo and 3 <= len(texto_limpo) <= 6:
+                print(f"CAPTCHA lido e sanitizado ({modelo}): {texto_limpo}")
+                return texto_limpo
         except Exception:
             continue
 
@@ -224,7 +229,6 @@ def executar_busca():
         print("5. Verificando resultado da busca...")
         fontes = [page] + page.frames
 
-        # Tira print e envia no Telegram para acompanhamento visual
         foto_path = "resultado.png"
         page.screenshot(path=foto_path)
         avisar_telegram("📷 Diagnóstico da varredura PROEIS:", foto_path=foto_path)
@@ -274,4 +278,4 @@ def executar_busca():
 
 if __name__ == "__main__":
     executar_busca()
-        
+    
