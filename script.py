@@ -11,8 +11,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-# Nome exato do convênio no dropdown (ex: "Prefeitura de Maricá"). Se None, usará o selecionado.
-CONVENIO_DESEJADO = os.getenv("CONVENIO_DESEJADO", "Prefeitura de Maricá")
+# Defina o convênio desejado ou mantenha None para usar a seleção padrão do portal
+CONVENIO_DESEJADO = os.getenv("CONVENIO_DESEJADO", None)
 
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
@@ -99,8 +99,8 @@ def executar_busca():
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        # Aceita caixas de diálogo nativas ("Tem certeza que deseja assumir este serviço?")
-        page.on("dialog", lambda dialog: (print(f"Diálogo de confirmação aceito: {dialog.message}"), dialog.accept()))
+        # Confirma automaticamente a caixa "Tem certeza que deseja assumir este serviço?"
+        page.on("dialog", lambda dialog: (print(f"Diálogo aceito: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
@@ -166,13 +166,12 @@ def executar_busca():
                 btn_vis = f.locator("input[value='VISUALIZAR'], input[value='Visualizar']")
                 if btn_vis.count() > 0:
                     select_elem = f.locator("select")
-                    if select_elem.count() > 0:
-                        if CONVENIO_DESEJADO:
-                            try:
-                                select_elem.first.select_option(label=CONVENIO_DESEJADO)
-                                print(f"Convênio '{CONVENIO_DESEJADO}' selecionado.")
-                            except Exception:
-                                print(f"Não foi possível selecionar '{CONVENIO_DESEJADO}' pelo rótulo, mantendo opção padrão.")
+                    if select_elem.count() > 0 and CONVENIO_DESEJADO:
+                        try:
+                            select_elem.first.select_option(label=CONVENIO_DESEJADO)
+                            print(f"Convênio '{CONVENIO_DESEJADO}' selecionado.")
+                        except Exception:
+                            print(f"Não foi possível selecionar '{CONVENIO_DESEJADO}'.")
 
                     img_captcha_busca = localizar_imagem_captcha(f)
                     if img_captcha_busca:
@@ -190,26 +189,28 @@ def executar_busca():
             except Exception as e:
                 print(f"Erro ao submeter busca: {e}")
 
-        # Passo 4: Varredura detalhada na tabela
+        # Passo 4: Varredura detalhada na tabela e exibição dos registros lidos
         print("5. Verificando vagas na tabela...")
         fontes = [page] + page.frames
 
-        vaga_encontrada = False
+        vaga_solicitada = False
         for f in fontes:
             try:
                 linhas = f.locator("tr")
                 total_linhas = linhas.count()
+                
                 if total_linhas > 0:
-                    print(f"Total de linhas lidas na tabela: {total_linhas}")
-                    
                     for i in range(total_linhas):
-                        texto_linha = linhas.nth(i).inner_text()
+                        texto_raw = linhas.nth(i).inner_text()
+                        texto_linha = texto_raw.replace('\xa0', ' ').strip()
                         
-                        # Verifica se alguma data procurada está nesta linha
+                        # Exibe a linha lida no log para auditoria (ignora cabeçalhos simples)
+                        if len(texto_linha) > 10:
+                            print(f"Linha [{i+1}]: {texto_linha}")
+
                         for data in DATAS_DESEJADAS:
                             if data in texto_linha:
-                                print(f"🚨 Vaga encontrada para a data: {data}")
-                                vaga_encontrada = True
+                                print(f"🚨 VAGA ENCONTRADA PARA A DATA: {data}")
                                 
                                 btn_solicitar = linhas.nth(i).locator(
                                     "input[value*='SOLICITAR'], button:has-text('SOLICITAR')"
@@ -221,17 +222,18 @@ def executar_busca():
                                     page.wait_for_timeout(5000)
                                     avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
                                     print(f"Sucesso: Vaga solicitada para {data}!")
+                                    vaga_solicitada = True
                                     browser.close()
                                     return True
             except Exception as e:
                 print(f"Erro ao ler tabela: {e}")
 
-        if not vaga_encontrada:
-            print("Nenhuma das datas cadastradas está presente na tabela carregada nesta rodada.")
+        if not vaga_solicitada:
+            print("Fim da varredura. Nenhuma das datas desejadas bateu com a tabela atual.")
 
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
-                    
+    
