@@ -30,6 +30,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PROEIS_CPF: ${{ secrets.PROEIS_CPF }}
           PROEIS_SENHA: ${{ secrets.PROEIS_SENHA }}
-        run: python app.py
+        run: python script.py
+        
         
         
