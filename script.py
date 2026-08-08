@@ -11,8 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 PROEIS_RG = os.getenv("PROEIS_CPF")
 PROEIS_SENHA = os.getenv("PROEIS_SENHA")
 
-CONVENIO_DESEJADO = None
-
+# Lista de datas de interesse
 DATAS_DESEJADAS = [
     "11/08/2026", "12/08/2026", "14/08/2026", "17/08/2026", 
     "18/08/2026", "20/08/2026", "21/08/2026", "23/08/2026",
@@ -67,14 +66,14 @@ def ler_captcha_proeis(imagem_bytes):
             )
             texto = response.text.strip() if response.text else ""
             if texto and len(texto) <= 6 and not "não" in texto.lower():
-                print(f"CAPTCHA lido via {modelo}: {texto}")
+                print(f"CAPTCHA lido com sucesso: {texto}")
                 return texto
         except Exception:
             continue
 
     return ""
 
-def localizar_imagem_captcha(page_or_frame):
+def localizar_imagem_captcha(contexto):
     seletores = [
         "img[src*='captcha']",
         "img[src*='Captcha']",
@@ -82,7 +81,7 @@ def localizar_imagem_captcha(page_or_frame):
         "form img"
     ]
     for sel in seletores:
-        loc = page_or_frame.locator(sel)
+        loc = contexto.locator(sel)
         if loc.count() > 0:
             for i in range(loc.count()):
                 elem = loc.nth(i)
@@ -92,41 +91,22 @@ def localizar_imagem_captcha(page_or_frame):
                         return elem
     return None
 
-def navegar_para_servicos_disponiveis(page):
-    """Aguarda e clica na opção 'Serviços Disponíveis' do menu lateral."""
-    for _ in range(3):
-        frames = [page] + page.frames
-        for fr in frames:
-            try:
-                # Tenta localizar por texto exato do menu
-                link = fr.locator("a", has_text="Serviços Disponíveis")
-                if link.count() == 0:
-                    link = fr.locator("a[href*='disponiv']")
-                
-                if link.count() > 0 and link.first.is_visible():
-                    link.first.click()
-                    return True
-            except Exception:
-                continue
-        page.wait_for_timeout(2000)
-    return False
-
 def executar_busca():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        # Confirma automaticamente qualquer caixa de diálogo/alerta
-        page.on("dialog", lambda dialog: (print(f"Alerta confirmado: {dialog.message}"), dialog.accept()))
+        # Aceita automaticamente a caixa de diálogo "Tem certeza que deseja assumir este serviço?"
+        page.on("dialog", lambda dialog: (print(f"Diálogo de confirmação aceito: {dialog.message}"), dialog.accept()))
 
         print("1. Acessando o portal PROEISBM...")
         page.goto("https://www.proeisbm.cbmerj.rj.gov.br/", wait_until="networkidle", timeout=60000)
         page.wait_for_timeout(2000)
 
-        # Step 1: Login
+        # Passo 1: Realizar Login
         if PROEIS_RG and PROEIS_SENHA:
-            print("2. Preenchendo login (RG e Senha)...")
+            print("2. Preenchendo credenciais de login...")
             try:
                 inputs_texto = page.locator("input[type='text']")
                 input_senha = page.locator("input[type='password']")
@@ -147,61 +127,72 @@ def executar_busca():
                     btn_entrar = page.locator("input[value='Entrar'], input[value='ENTRAR'], input[type='submit']")
                     if btn_entrar.count() > 0:
                         btn_entrar.first.click()
-                        print("Botão Entrar clicado. Aguardando login...")
-                        # Aguarda a página pós-login carregar
-                        page.wait_for_load_state("networkidle")
-                        page.wait_for_timeout(4000)
+                        print("Aguardando confirmação de login...")
+                        page.wait_for_timeout(5000)
             except Exception as e:
-                print(f"Aviso ao efetuar login: {e}")
+                print(f"Erro no login: {e}")
 
-        # Step 2: Navegação para "Serviços Disponíveis"
-        print("3. Navegando para a página 'Serviços Disponíveis'...")
-        if navegar_para_servicos_disponiveis(page):
-            print("Link 'Serviços Disponíveis' clicado com sucesso.")
-            page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(3000)
-        else:
-            print("Aviso: Não foi possível clicar em 'Serviços Disponíveis'. Tentando prosseguir...")
+        # Passo 2: Clicar em "Serviços Disponíveis" no Menu Restrito
+        print("3. Navegando até 'Serviços Disponíveis'...")
+        clicado_menu = False
+        fontes = [page] + page.frames
 
-        # Step 3: Resolvendo CAPTCHA e clicando em VISUALIZAR
-        print("4. Preenchendo busca e resolvendo CAPTCHA de serviços...")
-        frames_para_busca = [page] + page.frames
-        busca_feita = False
-
-        for fr in frames_para_busca:
+        for f in fontes:
             try:
-                img_captcha_busca = localizar_imagem_captcha(fr)
-                btn_vis = fr.locator("input[value='VISUALIZAR'], input[value='Visualizar'], button:has-text('VISUALIZAR')")
-                
-                if btn_vis.count() > 0 and btn_vis.first.is_visible():
+                link_servicos = f.locator("a", has_text="Serviços Disponíveis")
+                if link_servicos.count() > 0 and link_servicos.first.is_visible():
+                    link_servicos.first.click()
+                    clicado_menu = True
+                    print("Menu 'Serviços Disponíveis' clicado.")
+                    page.wait_for_timeout(4000)
+                    break
+            except Exception:
+                continue
+
+        if not clicado_menu:
+            print("Aviso: Tentando clique forçado no link do menu...")
+            page.evaluate("""
+                () => {
+                    const links = Array.from(document.querySelectorAll('a'));
+                    const target = links.find(a => a.textContent.includes('Serviços Disponíveis'));
+                    if (target) target.click();
+                }
+            """)
+            page.wait_for_timeout(4000)
+
+        # Passo 3: Preencher CAPTCHA de SERVIÇOS VAGOS e clicar em VISUALIZAR
+        print("4. Resolvendo CAPTCHA do formulário de busca de vagas...")
+        fontes = [page] + page.frames
+        busca_submetida = False
+
+        for f in fontes:
+            try:
+                btn_vis = f.locator("input[value='VISUALIZAR'], input[value='Visualizar']")
+                if btn_vis.count() > 0:
+                    img_captcha_busca = localizar_imagem_captcha(f)
                     if img_captcha_busca:
-                        print("Lendo CAPTCHA da tela de busca de vagas...")
                         img_bytes_busca = img_captcha_busca.screenshot()
                         texto_captcha_busca = ler_captcha_proeis(img_bytes_busca)
 
-                        inputs = fr.locator("input[type='text']")
-                        if inputs.count() > 0 and texto_captcha_busca:
-                            inputs.last.fill(texto_captcha_busca)
+                        campo_captcha = f.locator("input[type='text']").last
+                        if texto_captcha_busca and campo_captcha:
+                            campo_captcha.fill(texto_captcha_busca)
 
                     btn_vis.first.click()
                     print("Botão VISUALIZAR clicado. Carregando tabela de vagas...")
-                    page.wait_for_load_state("networkidle")
-                    page.wait_for_timeout(4000)
-                    busca_feita = True
+                    page.wait_for_timeout(5000)
+                    busca_submetida = True
                     break
             except Exception as e:
-                continue
+                print(f"Erro ao submeter busca: {e}")
 
-        if not busca_feita:
-            print("Aviso: Botão VISUALIZAR não foi encontrado nesta página.")
+        # Passo 4: Varredura na Tabela de Vagas e Solicitação do Serviço
+        print("5. Verificando vagas na tabela...")
+        fontes = [page] + page.frames
 
-        # Step 4: Varredura da Tabela de Vagas
-        print("5. Verificando tabela de vagas...")
-        frames_para_checar = [page] + page.frames
-
-        for fr in frames_para_checar:
+        for f in fontes:
             try:
-                linhas = fr.locator("tr")
+                linhas = f.locator("tr")
                 qtd = linhas.count()
                 for i in range(qtd):
                     texto_linha = linhas.nth(i).inner_text()
@@ -211,24 +202,24 @@ def executar_busca():
                             print(f"🚨 Vaga encontrada para a data: {data}")
                             
                             btn = linhas.nth(i).locator(
-                                "input[value*='SOLICITAR'], button:has-text('SOLICITAR'), input[type='button'], input[type='submit']"
+                                "input[value*='SOLICITAR'], button:has-text('SOLICITAR SERVIÇO')"
                             )
                             
                             if btn.count() > 0:
                                 print("Clicando no botão SOLICITAR SERVIÇO...")
                                 btn.first.click()
-                                page.wait_for_timeout(4000)
+                                page.wait_for_timeout(5000)
                                 avisar_telegram(f"🚨 VAGA ASSUMIDA COM SUCESSO! Data: {data}")
-                                print("Sucesso: Confirmação realizada e vaga solicitada!")
+                                print(f"Sucesso: Vaga assumida para {data}!")
                                 browser.close()
                                 return True
             except Exception as e:
-                print(f"Erro durante varredura: {e}")
+                print(f"Erro na verificação da tabela: {e}")
 
-        print("Nenhuma vaga desejada encontrada nesta rodada.")
+        print("Nenhuma vaga desejada foi encontrada nesta rodada.")
         browser.close()
         return False
 
 if __name__ == "__main__":
     executar_busca()
-        
+            
